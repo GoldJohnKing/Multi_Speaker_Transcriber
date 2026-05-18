@@ -211,7 +211,11 @@ def run_pipeline(
             speaker_ids = list(unique_speakers.keys())
             for idx, spk_id in enumerate(speaker_ids):
                 if idx < len(separated_tracks):
-                    transcripts = transcriber.transcribe(separated_tracks[idx])
+                    track = separated_tracks[idx]
+                    # Skip separated tracks too short for VAD
+                    if len(track.waveform) < int(0.3 * track.sample_rate):
+                        continue
+                    transcripts = transcriber.transcribe(track)
                     for t in transcripts:
                         all_segments.append(
                             TranscriptSegment(
@@ -237,6 +241,9 @@ def run_pipeline(
                 end_sample = min(len(audio.waveform), end_sample)
                 if end_sample <= start_sample:
                     continue
+                # Skip segments too short for VAD (< 0.3s)
+                if (end_sample - start_sample) < int(0.3 * audio.sample_rate):
+                    continue
                 segment_audio = AudioSegment(
                     waveform=audio.waveform[start_sample:end_sample],
                     sample_rate=audio.sample_rate,
@@ -255,6 +262,7 @@ def run_pipeline(
                     )
     else:
         # Default mode: send every diarization segment directly to ASR
+        _min_samples = int(0.3 * audio.sample_rate)
         for spk_seg in diarization.segments:
             start_sample = int(
                 (spk_seg.start_time - audio.start_time) * audio.sample_rate
@@ -264,7 +272,7 @@ def run_pipeline(
             )
             start_sample = max(0, start_sample)
             end_sample = min(len(audio.waveform), end_sample)
-            if end_sample <= start_sample:
+            if end_sample - start_sample < _min_samples:
                 continue
 
             segment_audio = AudioSegment(
