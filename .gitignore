@@ -11,3 +11,6 @@ wheels/
 
 # Test samples (large media files)
 test_sample/
+
+# Pretrained model caches
+pretrained_models/
