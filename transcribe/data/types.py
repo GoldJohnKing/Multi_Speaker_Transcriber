@@ -59,7 +59,8 @@ class PipelineConfig:
     """Pipeline configuration."""
 
     device: str = "auto"  # "cpu" | "cuda" | "auto"
-    denoise: bool = False
+    denoise: bool = False  # enable noise suppression (DeepFilterNet)
+    diarize: bool = True  # enable speaker diarization (Pyannote)
     separate: bool = False  # enable overlap speech separation (SepFormer)
     hotwords: str | None = None  # hotword file path
     language: str = "zh"

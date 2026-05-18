@@ -26,6 +26,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--denoise", action="store_true", help="Enable noise suppression"
     )
     parser.add_argument(
+        "--no-diarize",
+        action="store_true",
+        help="Disable speaker diarization (all audio attributed to one speaker)",
+    )
+    parser.add_argument(
         "--separate", action="store_true", help="Enable overlap speech separation"
     )
     parser.add_argument(

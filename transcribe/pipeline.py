@@ -97,8 +97,14 @@ def run_pipeline(
     total_start = time.time()
 
     # Determine total stages for progress display
-    # Stages: extract, (denoise), diarize, (separate), asr, srt
-    total_stages = 4 + (1 if config.denoise else 0) + (1 if config.separate else 0)
+    # Stages: extract, (denoise), (diarize), (separate), asr, srt
+    total_stages = (
+        2  # extract + srt
+        + (1 if config.denoise else 0)
+        + (1 if config.diarize else 0)
+        + (1 if config.separate and config.diarize else 0)
+        + 1  # asr
+    )
 
     if verbose:
         console.print(f"[bold]设备:[/bold] {device}")
@@ -145,24 +151,26 @@ def run_pipeline(
     if audio.sample_rate != _ASR_SAMPLE_RATE:
         audio = _resample(audio, _ASR_SAMPLE_RATE)
 
-    # Stage 3: Speaker diarization
-    step += 1
-    step_start = time.time()
-    if verbose:
-        console.print(f"[{step}/{total_stages}] 说话人识别 ...", end=" ")
-    diarizer = Diarizer(device=device, num_speakers=config.num_speakers)
-    diarization = diarizer.process(audio)
-    diarizer.cleanup()
-    if verbose:
-        console.print(
-            f"检测到 {diarization.num_speakers} 位说话人, "
-            f"{len(diarization.overlap_regions)} 个重叠区域 ... "
-            f"完成 ({time.time() - step_start:.1f}s)"
-        )
+    # Stage 3: Speaker diarization (default on, disable with --no-diarize)
+    diarization: DiarizationResult | None = None
+    if config.diarize:
+        step += 1
+        step_start = time.time()
+        if verbose:
+            console.print(f"[{step}/{total_stages}] 说话人识别 ...", end=" ")
+        diarizer = Diarizer(device=device, num_speakers=config.num_speakers)
+        diarization = diarizer.process(audio)
+        diarizer.cleanup()
+        if verbose:
+            console.print(
+                f"检测到 {diarization.num_speakers} 位说话人, "
+                f"{len(diarization.overlap_regions)} 个重叠区域 ... "
+                f"完成 ({time.time() - step_start:.1f}s)"
+            )
 
-    # Stage 4: Speech separation (optional, only when --separate is enabled)
+    # Stage 4: Speech separation (optional, only with --separate + diarization)
     overlap_separated: dict[tuple[float, float], list[AudioSegment]] = {}
-    if config.separate and diarization.overlap_regions:
+    if config.separate and diarization and diarization.overlap_regions:
         step += 1
         step_start = time.time()
         if verbose:
@@ -195,8 +203,21 @@ def run_pipeline(
         console.print(f"[{step}/{total_stages}] 语音转文字 ...", end=" ")
     transcriber = ASRTranscriber(device=device, hotword_path=config.hotwords)
     all_segments: list[TranscriptSegment] = []
+    _min_samples = int(0.3 * audio.sample_rate)
 
-    if overlap_separated:
+    if diarization is None:
+        # --no-diarize mode: transcribe full audio as single speaker
+        transcripts = transcriber.transcribe(audio)
+        for t in transcripts:
+            all_segments.append(
+                TranscriptSegment(
+                    speaker_id="SPEAKER_00",
+                    start_time=t.start_time,
+                    end_time=t.end_time,
+                    text=t.text,
+                )
+            )
+    elif overlap_separated:
         # --separate mode: overlap regions via separated tracks,
         # non-overlap portions from original audio
         for o_start, o_end in diarization.overlap_regions:
@@ -212,8 +233,7 @@ def run_pipeline(
             for idx, spk_id in enumerate(speaker_ids):
                 if idx < len(separated_tracks):
                     track = separated_tracks[idx]
-                    # Skip separated tracks too short for VAD
-                    if len(track.waveform) < int(0.3 * track.sample_rate):
+                    if len(track.waveform) < _min_samples:
                         continue
                     transcripts = transcriber.transcribe(track)
                     for t in transcripts:
@@ -239,10 +259,7 @@ def run_pipeline(
                 )
                 start_sample = max(0, start_sample)
                 end_sample = min(len(audio.waveform), end_sample)
-                if end_sample <= start_sample:
-                    continue
-                # Skip segments too short for VAD (< 0.3s)
-                if (end_sample - start_sample) < int(0.3 * audio.sample_rate):
+                if end_sample - start_sample < _min_samples:
                     continue
                 segment_audio = AudioSegment(
                     waveform=audio.waveform[start_sample:end_sample],
@@ -262,7 +279,6 @@ def run_pipeline(
                     )
     else:
         # Default mode: send every diarization segment directly to ASR
-        _min_samples = int(0.3 * audio.sample_rate)
         for spk_seg in diarization.segments:
             start_sample = int(
                 (spk_seg.start_time - audio.start_time) * audio.sample_rate
@@ -305,7 +321,7 @@ def run_pipeline(
     step_start = time.time()
     if verbose:
         console.print(f"[{step}/{total_stages}] 生成 SRT ...", end=" ")
-    writer = SrtWriter(speaker_label=True)
+    writer = SrtWriter(speaker_label=config.diarize)
     writer.write(all_segments, output)
     if verbose:
         console.print(f"输出 {len(all_segments)} 条字幕 ... 完成 ({time.time() - step_start:.1f}s)")
