@@ -70,7 +70,7 @@ Offline audio transcription pipeline for Chinese Mandarin. Takes video input, pr
 | **Plan** | [phase4-separation.md](docs/superpowers/plans/2026-05-18-phase4-separation.md) |
 | **Tasks** | 3 tasks: Separator module, pipeline integration, full pipeline tests |
 | **Design sections** | "Stage 4: Speech Separation", "VRAM Management" |
-| **Delivers** | Full 6-stage pipeline with overlap handling: extract → denoise → diarize → separate → ASR → SRT |
+| **Delivers** | Full 6-stage pipeline with overlap handling: extract → denoise → diarize → separate → ASR → SRT. Separation is optional (off by default), enabled via `--separate`. |
 | **Dependencies** | speechbrain (new) |
 | **Prerequisite** | Phase 1 + Phase 2 + Phase 3 |
 
@@ -93,7 +93,7 @@ uv sync --extra all
 # PyTorch ROCm
 uv pip install torch torchaudio --index-url https://download.pytorch.org/whl/rocm6.2
 
-# Run (basic)
+# Run — default: ASR + speaker diarization
 uv run python -m transcribe input.mp4 \
   --hotwords hotwords/my_dict.txt \
   -o output.srt \
@@ -105,4 +105,30 @@ uv run python -m transcribe input.mp4 \
   --hotwords hotwords/my_dict.txt \
   -o output.srt \
   -v
+
+# Run — pure ASR, no speaker diarization
+uv run python -m transcribe input.mp4 \
+  --no-diarize \
+  --hotwords hotwords/my_dict.txt \
+  -o output.srt \
+  -v
+
+# Run — full pipeline with overlap separation
+uv run python -m transcribe input.mp4 \
+  --denoise --separate \
+  --hotwords hotwords/my_dict.txt \
+  -o output.srt \
+  -v
 ```
+
+## CLI Flags Summary
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| *(none)* | ASR + diarization | Best recognition quality, speaker labels in SRT |
+| `--no-diarize` | — | Pure ASR, no speaker labels, faster |
+| `--denoise` | off | Enable DeepFilterNet noise suppression |
+| `--separate` | off | Enable SepFormer overlap speech separation |
+| `--num-speakers N` | auto | Hint known speaker count to diarizer |
+| `--hotwords FILE` | none | Hotword file for ASR boosting |
+| `-v, --verbose` | off | Print per-stage progress and timing |

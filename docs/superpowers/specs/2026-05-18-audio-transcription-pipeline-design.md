@@ -14,7 +14,7 @@ A fully offline, local audio transcription pipeline that takes a video file as i
 ## Architecture
 
 ```
-Video → ① Audio Extract → ② Denoise → ③ Diarize → ④ Separate Overlaps → ⑤ ASR (hotwords) → ⑥ SRT Writer
+Video → ① Audio Extract → ② Denoise (opt) → ③ Diarize (default on) → ④ Separate Overlaps (opt) → ⑤ ASR (hotwords) → ⑥ SRT Writer
 ```
 
 Each stage is an independent Python class with a unified `process(input) -> output` interface. Models are loaded on-demand and released after each stage to manage VRAM (peak ~10GB).
@@ -38,7 +38,7 @@ Each stage is an independent Python class with a unified `process(input) -> outp
 │FFmpeg │ │Deep  │ │Pyan- │ │Sep-  │ │SeACo │ │      │
 │       │ │Filter│ │note  │ │Former│ │Para- │ │Merge │
 │       │ │Net v2│ │3.1   │ │      │ │former│ │spkr+ │
-│       │ │      │ │      │ │      │ │      │ │ts→srt│
+│       │ │ opt  │ │default│ │ opt  │ │      │ │ts→srt│
 └──────┘ └──────┘ └──────┘ └──────┘ └──────┘ └──────┘
    ①        ②        ③        ④       ⑤        ⑥
 ```
@@ -113,6 +113,8 @@ class PipelineConfig:
     """Pipeline configuration."""
     device: str = "auto"          # "cpu" | "cuda" | "auto" (auto-detect ROCm)
     denoise: bool = False         # enable noise suppression (off by default)
+    diarize: bool = True          # enable speaker diarization (on by default)
+    separate: bool = False        # enable overlap speech separation (off by default)
     hotwords: str | None = None   # hotword file path
     language: str = "zh"
     cache_dir: str = ".cache"     # intermediate artifacts cache directory
@@ -144,23 +146,24 @@ class PipelineConfig:
 - **Config**: `post_filter: false` by default (prevents over-suppression on clean audio)
 - **Rationale**: DeepFilterNet is trained on DNS4 outdoor noise dataset (wind, traffic, crowd). SNR gating prevents quality degradation on clean audio.
 
-### Stage 3: Speaker Diarization (`diarizer.py`)
+### Stage 3: Speaker Diarization (`diarizer.py`) — Default on, disable with `--no-diarize`
 
 - **Input**: `AudioSegment` (denoised)
 - **Output**: `DiarizationResult`
 - **Model**: Pyannote `pyannote/speaker-diarization-3.1`
+- **Default**: Enabled. Disabled via `--no-diarize` CLI flag or `diarize: false` in config
 - **Behavior**:
-  - Detect all speaker segments with `speaker_id` + time range
   - **Explicitly mark overlap regions** (Pyannote's core capability via powerset multi-class cross-entropy loss)
   - Output `overlap_regions` list for the next stage
   - If `--num-speakers` is provided, pass to Pyannote for higher accuracy
 - **Note**: Pyannote models require HuggingFace download on first run (gated access, free token required)
 
-### Stage 4: Speech Separation (`separator.py`) — Overlap regions only
+### Stage 4: Speech Separation (`separator.py`) — Optional, off by default
 
 - **Input**: `AudioSegment` + `DiarizationResult`
 - **Output**: `list[AudioSegment]` (separated per-speaker audio for overlap regions, with original time offsets)
 - **Model**: SpeechBrain SepFormer (`speechbrain/sepformer-whamr`)
+- **Default**: Disabled. Enabled via `--separate` CLI flag or `separate: true` in config. Requires diarization to be enabled.
 - **Behavior**:
   - Crop only the audio corresponding to `overlap_regions` (non-overlap regions pass through unchanged)
   - Run SepFormer on each overlap fragment to separate into 2 independent speaker tracks
@@ -170,7 +173,7 @@ class PipelineConfig:
 
 ### Stage 5: Speech Recognition (`asr.py`)
 
-- **Input**: All speaker-segmented audio (overlaps separated into individual tracks, non-overlap used directly)
+- **Input**: All speaker-segmented audio (when diarization is on) or full audio (when `--no-diarize`)
 - **Output**: `list[TranscriptSegment]`
 - **Model**: FunASR SeACo-Paraformer + FSMN-VAD + CT-Transformer punctuation
 - **Hotword mechanism**:
@@ -225,11 +228,20 @@ Peak VRAM: ~10GB (one stage at a time). Each stage calls `torch.cuda.empty_cache
 ## CLI Interface
 
 ```bash
-# Basic usage
+# Default: ASR + speaker diarization (best quality)
 python -m transcribe input.mp4 -o output.srt
 
 # With noise suppression and hotwords
 python -m transcribe input.mp4 --denoise --hotwords hotwords/my_dict.txt -o output.srt -v
+
+# Pure ASR, no speaker diarization (faster)
+python -m transcribe input.mp4 --no-diarize --hotwords hotwords/my_dict.txt -o output.srt -v
+
+# Full pipeline with overlap separation
+python -m transcribe input.mp4 \
+  --denoise --separate \
+  --hotwords hotwords/my_dict.txt \
+  -o output.srt -v
 
 # Full parameters
 python -m transcribe input.mp4 \
@@ -237,6 +249,8 @@ python -m transcribe input.mp4 \
   --hotwords hotwords/my_dict.txt \
   --num-speakers 4 \
   --denoise \
+  --no-diarize \
+  --separate \
   --device cuda \
   --cache-dir .pipeline_cache \
   --config config.yaml \
@@ -251,6 +265,8 @@ python -m transcribe input.mp4 \
 | `--hotwords` | str | None | Hotword file path (one word per line) |
 | `--num-speakers` | int | None | Known speaker count (auto-detect if omitted) |
 | `--denoise` | flag | False | Enable noise suppression (SNR-gated: skipped if audio is clean) |
+| `--no-diarize` | flag | False | Disable speaker diarization (all audio attributed to one speaker) |
+| `--separate` | flag | False | Enable overlap speech separation (requires diarization) |
 | `--device` | str | auto | `cpu` / `cuda` / `auto` (auto-detect ROCm) |
 | `--cache-dir` | str | .cache | Intermediate artifacts cache directory |
 | `--config` | str | None | YAML config file path |
@@ -263,6 +279,8 @@ python -m transcribe input.mp4 \
 # config.yaml — default configuration
 device: auto
 denoise: false
+diarize: true          # Speaker diarization (default on)
+separate: false        # Overlap speech separation (default off)
 language: zh
 
 # Noise suppression
@@ -277,7 +295,7 @@ diarizer:
   hf_token: null             # HuggingFace token (needed for first model download)
   clustering: hidden_markov  # Clustering algorithm
 
-# Speech separation (overlap regions only)
+# Speech separation (overlap regions only, requires --separate)
 separator:
   model: speechbrain/sepformer-whamr
   max_segment_seconds: 10    # Max fragment length per separation pass
@@ -328,6 +346,27 @@ Priority: CLI args > YAML config > code defaults
 
 ### Progress Display
 
+Stage numbering is dynamic based on enabled features:
+
+```
+# Default (ASR + diarization)
+[1/4] 提取音频 ... 完成 (2.1s)
+[2/4] 说话人识别 ... 检测到 4 位说话人, 12 个重叠区域 ... 完成 (3m 05s)
+[3/4] 语音转文字 ... 识别 347 个片段 ... 完成 (4m 42s)
+[4/4] 生成 SRT ... 输出 312 条字幕 ... 完成 (0.3s)
+
+# With --denoise --separate (full pipeline)
+[1/6] 提取音频 ... 完成 (2.1s)
+[2/6] 噪声抑制 ... 完成 (1m 23s)
+[3/6] 说话人识别 ... 检测到 4 位说话人, 12 个重叠区域 ... 完成 (3m 05s)
+[4/6] 重叠语音分离 ... 处理 12 个重叠片段 ... 完成 (2m 18s)
+[5/6] 语音转文字 ... 识别 347 个片段 ... 完成 (4m 42s)
+[6/6] 生成 SRT ... 输出 312 条字幕 ... 完成 (0.3s)
+
+# With --no-diarize (pure ASR)
+[1/3] 提取音频 ... 完成 (2.1s)
+[2/3] 语音转文字 ... 完成 (4m 42s)
+[3/3] 生成 SRT ... 输出 312 条字幕 ... 完成 (0.3s)
 ```
 [1/6] 提取音频 ... 完成 (2.1s)
 [2/6] 噪声抑制 ... 完成 (1m 23s)
