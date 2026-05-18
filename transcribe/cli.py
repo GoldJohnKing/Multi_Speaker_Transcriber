@@ -26,6 +26,9 @@ def build_parser() -> argparse.ArgumentParser:
         "--denoise", action="store_true", help="Enable noise suppression"
     )
     parser.add_argument(
+        "--separate", action="store_true", help="Enable overlap speech separation"
+    )
+    parser.add_argument(
         "--device",
         choices=["cpu", "cuda", "auto"],
         default="auto",

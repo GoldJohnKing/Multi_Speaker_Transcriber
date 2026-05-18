@@ -1,5 +1,6 @@
 device: auto
 denoise: false
+separate: false
 language: zh
 
 denoiser:

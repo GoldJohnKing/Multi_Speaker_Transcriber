@@ -12,6 +12,7 @@ def main() -> None:
         cli_overrides={
             "device": args.device,
             "denoise": args.denoise,
+            "separate": args.separate,
             "hotwords": args.hotwords,
             "num_speakers": args.num_speakers,
             "cache_dir": args.cache_dir,

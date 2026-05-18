@@ -15,6 +15,7 @@ from transcribe.data.types import (
     AudioSegment,
     DiarizationResult,
     PipelineConfig,
+    SpeakerSegment,
     TranscriptSegment,
 )
 from transcribe.models.audio_extractor import AudioExtractor
@@ -97,7 +98,7 @@ def run_pipeline(
 
     # Determine total stages for progress display
     # Stages: extract, (denoise), diarize, (separate), asr, srt
-    total_stages = 4 + (1 if config.denoise else 0) + 1  # +1 for separation
+    total_stages = 4 + (1 if config.denoise else 0) + (1 if config.separate else 0)
 
     if verbose:
         console.print(f"[bold]设备:[/bold] {device}")
@@ -159,9 +160,9 @@ def run_pipeline(
             f"完成 ({time.time() - step_start:.1f}s)"
         )
 
-    # Stage 4: Speech separation (overlap regions only)
+    # Stage 4: Speech separation (optional, only when --separate is enabled)
     overlap_separated: dict[tuple[float, float], list[AudioSegment]] = {}
-    if diarization.overlap_regions:
+    if config.separate and diarization.overlap_regions:
         step += 1
         step_start = time.time()
         if verbose:
@@ -187,7 +188,7 @@ def run_pipeline(
         if verbose:
             console.print(f"完成 ({time.time() - step_start:.1f}s)")
 
-    # Stage 5: ASR — overlap regions via separated tracks, rest from original audio
+    # Stage 5: ASR
     step += 1
     step_start = time.time()
     if verbose:
@@ -195,44 +196,71 @@ def run_pipeline(
     transcriber = ASRTranscriber(device=device, hotword_path=config.hotwords)
     all_segments: list[TranscriptSegment] = []
 
-    # 5a. Transcribe overlap regions using separated audio tracks
-    for o_start, o_end in diarization.overlap_regions:
-        if (o_start, o_end) not in overlap_separated:
-            continue
-        separated_tracks = overlap_separated[(o_start, o_end)]
-        # Collect unique speakers whose segments intersect this overlap region
-        unique_speakers: dict[str, SpeakerSegment] = {}
-        for s in diarization.segments:
-            if s.start_time < o_end and s.end_time > o_start:
-                if s.speaker_id not in unique_speakers:
-                    unique_speakers[s.speaker_id] = s
-
-        speaker_ids = list(unique_speakers.keys())
-        for idx, spk_id in enumerate(speaker_ids):
-            if idx < len(separated_tracks):
-                transcripts = transcriber.transcribe(separated_tracks[idx])
+    if overlap_separated:
+        # --separate mode: overlap regions via separated tracks,
+        # non-overlap portions from original audio
+        for o_start, o_end in diarization.overlap_regions:
+            if (o_start, o_end) not in overlap_separated:
+                continue
+            separated_tracks = overlap_separated[(o_start, o_end)]
+            unique_speakers: dict[str, SpeakerSegment] = {}
+            for s in diarization.segments:
+                if s.start_time < o_end and s.end_time > o_start:
+                    if s.speaker_id not in unique_speakers:
+                        unique_speakers[s.speaker_id] = s
+            speaker_ids = list(unique_speakers.keys())
+            for idx, spk_id in enumerate(speaker_ids):
+                if idx < len(separated_tracks):
+                    transcripts = transcriber.transcribe(separated_tracks[idx])
+                    for t in transcripts:
+                        all_segments.append(
+                            TranscriptSegment(
+                                speaker_id=spk_id,
+                                start_time=t.start_time,
+                                end_time=t.end_time,
+                                text=t.text,
+                            )
+                        )
+        # Non-overlap portions from original audio
+        for spk_seg in diarization.segments:
+            non_overlap = _non_overlap_ranges(
+                spk_seg.start_time, spk_seg.end_time, diarization.overlap_regions
+            )
+            for rng_start, rng_end in non_overlap:
+                start_sample = int(
+                    (rng_start - audio.start_time) * audio.sample_rate
+                )
+                end_sample = int(
+                    (rng_end - audio.start_time) * audio.sample_rate
+                )
+                start_sample = max(0, start_sample)
+                end_sample = min(len(audio.waveform), end_sample)
+                if end_sample <= start_sample:
+                    continue
+                segment_audio = AudioSegment(
+                    waveform=audio.waveform[start_sample:end_sample],
+                    sample_rate=audio.sample_rate,
+                    start_time=rng_start,
+                    end_time=rng_end,
+                )
+                transcripts = transcriber.transcribe(segment_audio)
                 for t in transcripts:
                     all_segments.append(
                         TranscriptSegment(
-                            speaker_id=spk_id,
+                            speaker_id=spk_seg.speaker_id,
                             start_time=t.start_time,
                             end_time=t.end_time,
                             text=t.text,
                         )
                     )
-
-    # 5b. Transcribe non-overlap portions of every segment from original audio
-    for spk_seg in diarization.segments:
-        # Compute the non-overlap time ranges within this segment
-        non_overlap = _non_overlap_ranges(
-            spk_seg.start_time, spk_seg.end_time, diarization.overlap_regions
-        )
-        for rng_start, rng_end in non_overlap:
+    else:
+        # Default mode: send every diarization segment directly to ASR
+        for spk_seg in diarization.segments:
             start_sample = int(
-                (rng_start - audio.start_time) * audio.sample_rate
+                (spk_seg.start_time - audio.start_time) * audio.sample_rate
             )
             end_sample = int(
-                (rng_end - audio.start_time) * audio.sample_rate
+                (spk_seg.end_time - audio.start_time) * audio.sample_rate
             )
             start_sample = max(0, start_sample)
             end_sample = min(len(audio.waveform), end_sample)
@@ -242,8 +270,8 @@ def run_pipeline(
             segment_audio = AudioSegment(
                 waveform=audio.waveform[start_sample:end_sample],
                 sample_rate=audio.sample_rate,
-                start_time=rng_start,
-                end_time=rng_end,
+                start_time=spk_seg.start_time,
+                end_time=spk_seg.end_time,
             )
 
             transcripts = transcriber.transcribe(segment_audio)

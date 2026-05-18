@@ -60,6 +60,7 @@ class PipelineConfig:
 
     device: str = "auto"  # "cpu" | "cuda" | "auto"
     denoise: bool = False
+    separate: bool = False  # enable overlap speech separation (SepFormer)
     hotwords: str | None = None  # hotword file path
     language: str = "zh"
     cache_dir: str = ".cache"
