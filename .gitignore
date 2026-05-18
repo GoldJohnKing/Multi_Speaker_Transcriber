@@ -8,3 +8,6 @@ wheels/
 
 # Virtual environments
 .venv
+
+# Test samples (large media files)
+test_sample/
