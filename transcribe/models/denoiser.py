@@ -29,6 +29,40 @@ if "torchaudio.backend.common" not in sys.modules:
 # Internal model sample rate (DeepFilterNet always uses 48 kHz)
 _DF_SR = 48_000
 
+# Default SNR threshold (dB) above which audio is considered clean enough
+DEFAULT_SNR_THRESHOLD = 25.0
+
+
+def estimate_snr(audio: AudioSegment, frame_duration: float = 0.03) -> float:
+    """Estimate signal-to-noise ratio of audio using energy percentiles.
+
+    Splits audio into short frames, estimates noise floor from the quietest
+    frames and signal level from the loudest frames.
+
+    Args:
+        audio: Input audio segment.
+        frame_duration: Frame length in seconds (default 30ms).
+
+    Returns:
+        Estimated SNR in dB. Higher values mean cleaner audio.
+        Returns a large value (40.0) if noise floor is negligible.
+    """
+    frame_len = int(audio.sample_rate * frame_duration)
+    if frame_len == 0 or len(audio.waveform) < frame_len:
+        return 40.0
+
+    n_frames = len(audio.waveform) // frame_len
+    frames = audio.waveform[: n_frames * frame_len].reshape(n_frames, frame_len)
+    energies = np.mean(frames**2, axis=1)
+
+    noise_floor = np.percentile(energies, 10)
+    speech_energy = np.percentile(energies, 90)
+
+    if noise_floor < 1e-10:
+        return 40.0
+
+    return float(10 * np.log10(speech_energy / noise_floor))
+
 
 class Denoiser:
     """Noise suppression using DeepFilterNet."""

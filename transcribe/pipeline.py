@@ -14,7 +14,7 @@ from transcribe.config import load_config, resolve_device
 from transcribe.data.types import AudioSegment, PipelineConfig, TranscriptSegment
 from transcribe.models.audio_extractor import AudioExtractor
 from transcribe.models.asr import ASRTranscriber
-from transcribe.models.denoiser import Denoiser
+from transcribe.models.denoiser import DEFAULT_SNR_THRESHOLD, Denoiser, estimate_snr
 from transcribe.models.srt_writer import SrtWriter
 
 console = Console()
@@ -86,17 +86,29 @@ def run_pipeline(
     if verbose:
         console.print(f"完成 ({time.time() - step_start:.1f}s)")
 
-    # Stage 2: Noise suppression (optional)
+    # Stage 2: Noise suppression (optional, SNR-gated)
     if config.denoise:
         step += 1
         step_start = time.time()
-        if verbose:
-            console.print(f"[{step}/{total_stages}] 噪声抑制 ...", end=" ")
-        denoiser = Denoiser(device=device)
-        audio = denoiser.process(audio)
-        denoiser.cleanup()
-        if verbose:
-            console.print(f"完成 ({time.time() - step_start:.1f}s)")
+        snr = estimate_snr(audio)
+        if snr >= DEFAULT_SNR_THRESHOLD:
+            if verbose:
+                console.print(
+                    f"[{step}/{total_stages}] 噪声抑制 ... "
+                    f"跳过 (SNR={snr:.1f}dB >= {DEFAULT_SNR_THRESHOLD:.0f}dB，音频较干净)"
+                )
+        else:
+            if verbose:
+                console.print(
+                    f"[{step}/{total_stages}] 噪声抑制 ... "
+                    f"SNR={snr:.1f}dB < {DEFAULT_SNR_THRESHOLD:.0f}dB，需要降噪 ...",
+                    end=" ",
+                )
+            denoiser = Denoiser(device=device)
+            audio = denoiser.process(audio)
+            denoiser.cleanup()
+            if verbose:
+                console.print(f"完成 ({time.time() - step_start:.1f}s)")
 
     # Resample to ASR sample rate if needed
     if audio.sample_rate != _ASR_SAMPLE_RATE:
