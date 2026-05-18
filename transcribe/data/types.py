@@ -59,7 +59,7 @@ class PipelineConfig:
     """Pipeline configuration."""
 
     device: str = "auto"  # "cpu" | "cuda" | "auto"
-    denoise: bool = True
+    denoise: bool = False
     hotwords: str | None = None  # hotword file path
     language: str = "zh"
     cache_dir: str = ".cache"

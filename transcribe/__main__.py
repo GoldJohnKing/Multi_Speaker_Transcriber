@@ -11,7 +11,7 @@ def main() -> None:
         config_path=args.config,
         cli_overrides={
             "device": args.device,
-            "denoise": not args.no_denoise,
+            "denoise": args.denoise,
             "hotwords": args.hotwords,
             "num_speakers": args.num_speakers,
             "cache_dir": args.cache_dir,

@@ -70,8 +70,8 @@ def test_cli_parse_basic_args():
     """CLI should parse basic arguments."""
     from transcribe.cli import parse_args
 
-    args = parse_args(["input.mp4", "-o", "output.srt", "--no-denoise", "-v"])
+    args = parse_args(["input.mp4", "-o", "output.srt", "--denoise", "-v"])
     assert args.input == "input.mp4"
     assert args.output == "output.srt"
-    assert args.no_denoise is True
+    assert args.denoise is True
     assert args.verbose is True

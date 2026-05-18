@@ -23,7 +23,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Known number of speakers (auto-detect if omitted)",
     )
     parser.add_argument(
-        "--no-denoise", action="store_true", help="Skip noise suppression"
+        "--denoise", action="store_true", help="Enable noise suppression"
     )
     parser.add_argument(
         "--device",

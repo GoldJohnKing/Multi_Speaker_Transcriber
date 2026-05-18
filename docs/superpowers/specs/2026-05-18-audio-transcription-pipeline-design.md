@@ -112,7 +112,7 @@ class TranscriptSegment:
 class PipelineConfig:
     """Pipeline configuration."""
     device: str = "auto"          # "cpu" | "cuda" | "auto" (auto-detect ROCm)
-    denoise: bool = True          # enable noise suppression
+    denoise: bool = False         # enable noise suppression (off by default)
     hotwords: str | None = None   # hotword file path
     language: str = "zh"
     cache_dir: str = ".cache"     # intermediate artifacts cache directory
@@ -124,20 +124,25 @@ class PipelineConfig:
 ### Stage 1: Audio Extraction (`audio_extractor.py`)
 
 - **Input**: Video file path (mp4/mkv/avi/mov etc.)
-- **Output**: `AudioSegment` (16kHz mono float32 WAV)
-- **Implementation**: FFmpeg subprocess, convert to 16kHz mono WAV, load into memory
-- **Key params**: 16kHz sample rate (standard ASR input), mono channel
+- **Output**: `AudioSegment` (mono float32 WAV)
+- **Implementation**: FFmpeg subprocess, load into memory
+- **Sample rate**: Configurable via `sample_rate` parameter. Defaults to 16kHz (ASR standard). When denoising is enabled, extracts at 48kHz (DeepFilterNet native rate) to avoid destructive resampling.
 
-### Stage 2: Noise Suppression (`denoiser.py`) — Optional
+### Stage 2: Noise Suppression (`denoiser.py`) — Optional, off by default
 
 - **Input**: `AudioSegment`
 - **Output**: `AudioSegment` (denoised)
 - **Model**: DeepFilterNet v2 (~4MB, MIT license)
+- **Default**: Disabled. Enabled via `--denoise` CLI flag or `denoise: true` in config
 - **Behavior**:
-  - Load DeepFilterNet model -> enhance speech -> return clean audio
-  - Skipped when `denoise: false` in config or `--no-denoise` CLI flag
+  - SNR estimation: Computes signal-to-noise ratio using frame energy percentiles
+  - If SNR >= 25dB: Audio is considered clean enough, denoising is skipped
+  - If SNR < 25dB: Load DeepFilterNet model -> enhance speech -> return clean audio
+  - Model processes audio at its native 48kHz sample rate (no internal resampling)
+  - After denoising, audio is resampled to 16kHz for ASR
 - **Device**: GPU preferred (ROCm via PyTorch), falls back to CPU (RTF ~0.19)
-- **Rationale**: DeepFilterNet is trained on DNS4 outdoor noise dataset (wind, traffic, crowd), achieving SOTA DNSMOS scores while preserving speech quality
+- **Config**: `post_filter: false` by default (prevents over-suppression on clean audio)
+- **Rationale**: DeepFilterNet is trained on DNS4 outdoor noise dataset (wind, traffic, crowd). SNR gating prevents quality degradation on clean audio.
 
 ### Stage 3: Speaker Diarization (`diarizer.py`)
 
@@ -223,12 +228,15 @@ Peak VRAM: ~10GB (one stage at a time). Each stage calls `torch.cuda.empty_cache
 # Basic usage
 python -m transcribe input.mp4 -o output.srt
 
+# With noise suppression and hotwords
+python -m transcribe input.mp4 --denoise --hotwords hotwords/my_dict.txt -o output.srt -v
+
 # Full parameters
 python -m transcribe input.mp4 \
   --output output.srt \
   --hotwords hotwords/my_dict.txt \
   --num-speakers 4 \
-  --no-denoise \
+  --denoise \
   --device cuda \
   --cache-dir .pipeline_cache \
   --config config.yaml \
@@ -242,7 +250,7 @@ python -m transcribe input.mp4 \
 | `-o, --output` | str | same name `.srt` | Output SRT file path |
 | `--hotwords` | str | None | Hotword file path (one word per line) |
 | `--num-speakers` | int | None | Known speaker count (auto-detect if omitted) |
-| `--no-denoise` | flag | False | Skip noise suppression stage |
+| `--denoise` | flag | False | Enable noise suppression (SNR-gated: skipped if audio is clean) |
 | `--device` | str | auto | `cpu` / `cuda` / `auto` (auto-detect ROCm) |
 | `--cache-dir` | str | .cache | Intermediate artifacts cache directory |
 | `--config` | str | None | YAML config file path |
@@ -254,13 +262,14 @@ python -m transcribe input.mp4 \
 ```yaml
 # config.yaml — default configuration
 device: auto
-denoise: true
+denoise: false
 language: zh
 
 # Noise suppression
 denoiser:
-  model: deepfilternet_v2
-  post_filter: true          # Enable post-filter (stronger denoising)
+  model: DeepFilterNet2
+  post_filter: false         # Disable post-filter to avoid over-suppression
+  snr_threshold: 25          # Skip denoising if SNR >= 25dB
 
 # Speaker diarization
 diarizer:

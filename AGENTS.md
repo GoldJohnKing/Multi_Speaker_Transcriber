@@ -48,7 +48,7 @@ Offline audio transcription pipeline for Chinese Mandarin. Takes video input, pr
 | **Plan** | [phase2-denoise.md](docs/superpowers/plans/2026-05-18-phase2-denoise.md) |
 | **Tasks** | 2 tasks: Denoiser module, pipeline integration |
 | **Design sections** | "Stage 2: Noise Suppression", "VRAM Management" |
-| **Delivers** | DeepFilterNet v2 noise suppression, togglable via `--no-denoise` |
+| **Delivers** | DeepFilterNet v2 noise suppression (off by default), enabled via `--denoise`, SNR-gated adaptive denoising |
 | **Dependencies** | deepfilternet (new) |
 | **Prerequisite** | Phase 1 |
 
@@ -93,8 +93,15 @@ uv sync --extra all
 # PyTorch ROCm
 uv pip install torch torchaudio --index-url https://download.pytorch.org/whl/rocm6.2
 
-# Run
+# Run (basic)
 uv run python -m transcribe input.mp4 \
+  --hotwords hotwords/my_dict.txt \
+  -o output.srt \
+  -v
+
+# Run with noise suppression
+uv run python -m transcribe input.mp4 \
+  --denoise \
   --hotwords hotwords/my_dict.txt \
   -o output.srt \
   -v

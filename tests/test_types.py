@@ -147,7 +147,7 @@ class TestPipelineConfig:
     def test_defaults(self) -> None:
         cfg = PipelineConfig()
         assert cfg.device == "auto"
-        assert cfg.denoise is True
+        assert cfg.denoise is False
         assert cfg.hotwords is None
         assert cfg.language == "zh"
         assert cfg.cache_dir == ".cache"
