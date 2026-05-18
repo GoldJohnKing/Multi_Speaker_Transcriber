@@ -15,12 +15,14 @@ from transcribe.data.types import (
     AudioSegment,
     DiarizationResult,
     PipelineConfig,
+    SpeakerSegment,
     TranscriptSegment,
 )
 from transcribe.models.audio_extractor import AudioExtractor
 from transcribe.models.asr import ASRTranscriber
 from transcribe.models.denoiser import DEFAULT_SNR_THRESHOLD, Denoiser, estimate_snr
 from transcribe.models.diarizer import Diarizer
+from transcribe.models.separator import Separator
 from transcribe.models.srt_writer import SrtWriter
 
 console = Console()
@@ -73,7 +75,8 @@ def run_pipeline(
     total_start = time.time()
 
     # Determine total stages for progress display
-    total_stages = 4 + (1 if config.denoise else 0)
+    # Stages: extract, (denoise), diarize, (separate), asr, srt
+    total_stages = 4 + (1 if config.denoise else 0) + 1  # +1 for separation
 
     if verbose:
         console.print(f"[bold]设备:[/bold] {device}")
@@ -135,16 +138,96 @@ def run_pipeline(
             f"完成 ({time.time() - step_start:.1f}s)"
         )
 
-    # Stage 4: ASR per speaker segment
+    # Stage 4: Speech separation (overlap regions only)
+    overlap_separated: dict[tuple[float, float], list[AudioSegment]] = {}
+    if diarization.overlap_regions:
+        step += 1
+        step_start = time.time()
+        if verbose:
+            console.print(
+                f"[{step}/{total_stages}] 重叠语音分离 ... "
+                f"处理 {len(diarization.overlap_regions)} 个重叠片段 ...",
+                end=" ",
+            )
+        separator = Separator(device=device)
+        separated_audios = separator.separate_overlaps(audio, diarization)
+
+        # Group separated audio by overlap region (2 sources per region)
+        sep_idx = 0
+        for overlap_start, overlap_end in diarization.overlap_regions:
+            region_segments = []
+            for _ in range(2):
+                if sep_idx < len(separated_audios):
+                    region_segments.append(separated_audios[sep_idx])
+                    sep_idx += 1
+            overlap_separated[(overlap_start, overlap_end)] = region_segments
+
+        separator.cleanup()
+        if verbose:
+            console.print(f"完成 ({time.time() - step_start:.1f}s)")
+
+    # Stage 5: ASR per speaker segment
     step += 1
     step_start = time.time()
     if verbose:
         console.print(f"[{step}/{total_stages}] 语音转文字 ...", end=" ")
     transcriber = ASRTranscriber(device=device, hotword_path=config.hotwords)
     all_segments: list[TranscriptSegment] = []
+    processed_overlaps: set[tuple[float, float]] = set()
 
     for spk_seg in diarization.segments:
-        # Crop audio for this speaker segment
+        # For overlap regions: use separated audio tracks (process once per region)
+        if spk_seg.is_overlap:
+            # Find the matching overlap region
+            matched_key: tuple[float, float] | None = None
+            for o_start, o_end in diarization.overlap_regions:
+                if (
+                    spk_seg.start_time >= o_start - 0.01
+                    and spk_seg.end_time <= o_end + 0.01
+                ):
+                    matched_key = (o_start, o_end)
+                    break
+
+            if matched_key is None or matched_key in processed_overlaps:
+                continue  # already processed or no match found
+
+            processed_overlaps.add(matched_key)
+
+            if matched_key not in overlap_separated:
+                continue
+
+            separated_tracks = overlap_separated[matched_key]
+            # Collect all speaker segments in this overlap region
+            overlap_speakers = [
+                s for s in diarization.segments
+                if s.is_overlap
+                and s.start_time >= matched_key[0] - 0.01
+                and s.end_time <= matched_key[1] + 0.01
+            ]
+            # Deduplicate by speaker_id
+            unique_speakers: dict[str, SpeakerSegment] = {}
+            for s in overlap_speakers:
+                if s.speaker_id not in unique_speakers:
+                    unique_speakers[s.speaker_id] = s
+
+            # Transcribe each separated track for each unique speaker
+            speaker_ids = list(unique_speakers.keys())
+            for idx, spk_id in enumerate(speaker_ids):
+                if idx < len(separated_tracks):
+                    track = separated_tracks[idx]
+                    transcripts = transcriber.transcribe(track)
+                    for t in transcripts:
+                        all_segments.append(
+                            TranscriptSegment(
+                                speaker_id=spk_id,
+                                start_time=t.start_time,
+                                end_time=t.end_time,
+                                text=t.text,
+                            )
+                        )
+            continue
+
+        # Non-overlap: crop audio from original
         start_sample = int(
             (spk_seg.start_time - audio.start_time) * audio.sample_rate
         )
@@ -182,7 +265,7 @@ def run_pipeline(
             f"识别 {len(all_segments)} 个片段 ... 完成 ({time.time() - step_start:.1f}s)"
         )
 
-    # Stage 5: SRT generation
+    # Stage 6: SRT generation
     step += 1
     step_start = time.time()
     if verbose:
