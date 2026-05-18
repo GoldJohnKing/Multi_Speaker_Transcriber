@@ -11,10 +11,16 @@ import torchaudio.functional as TA_F
 from rich.console import Console
 
 from transcribe.config import load_config, resolve_device
-from transcribe.data.types import AudioSegment, PipelineConfig, TranscriptSegment
+from transcribe.data.types import (
+    AudioSegment,
+    DiarizationResult,
+    PipelineConfig,
+    TranscriptSegment,
+)
 from transcribe.models.audio_extractor import AudioExtractor
 from transcribe.models.asr import ASRTranscriber
 from transcribe.models.denoiser import DEFAULT_SNR_THRESHOLD, Denoiser, estimate_snr
+from transcribe.models.diarizer import Diarizer
 from transcribe.models.srt_writer import SrtWriter
 
 console = Console()
@@ -67,7 +73,7 @@ def run_pipeline(
     total_start = time.time()
 
     # Determine total stages for progress display
-    total_stages = 3 + (1 if config.denoise else 0)
+    total_stages = 4 + (1 if config.denoise else 0)
 
     if verbose:
         console.print(f"[bold]设备:[/bold] {device}")
@@ -114,34 +120,82 @@ def run_pipeline(
     if audio.sample_rate != _ASR_SAMPLE_RATE:
         audio = _resample(audio, _ASR_SAMPLE_RATE)
 
-    # Stage 3: ASR
+    # Stage 3: Speaker diarization
+    step += 1
+    step_start = time.time()
+    if verbose:
+        console.print(f"[{step}/{total_stages}] 说话人识别 ...", end=" ")
+    diarizer = Diarizer(device=device, num_speakers=config.num_speakers)
+    diarization = diarizer.process(audio)
+    diarizer.cleanup()
+    if verbose:
+        console.print(
+            f"检测到 {diarization.num_speakers} 位说话人, "
+            f"{len(diarization.overlap_regions)} 个重叠区域 ... "
+            f"完成 ({time.time() - step_start:.1f}s)"
+        )
+
+    # Stage 4: ASR per speaker segment
     step += 1
     step_start = time.time()
     if verbose:
         console.print(f"[{step}/{total_stages}] 语音转文字 ...", end=" ")
     transcriber = ASRTranscriber(device=device, hotword_path=config.hotwords)
-    segments = transcriber.transcribe(audio)
-    if verbose:
-        console.print(
-            f"识别 {len(segments)} 个片段 ... 完成 ({time.time() - step_start:.1f}s)"
+    all_segments: list[TranscriptSegment] = []
+
+    for spk_seg in diarization.segments:
+        # Crop audio for this speaker segment
+        start_sample = int(
+            (spk_seg.start_time - audio.start_time) * audio.sample_rate
+        )
+        end_sample = int(
+            (spk_seg.end_time - audio.start_time) * audio.sample_rate
+        )
+        # Clamp to valid range
+        start_sample = max(0, start_sample)
+        end_sample = min(len(audio.waveform), end_sample)
+        if end_sample <= start_sample:
+            continue
+
+        segment_audio = AudioSegment(
+            waveform=audio.waveform[start_sample:end_sample],
+            sample_rate=audio.sample_rate,
+            start_time=spk_seg.start_time,
+            end_time=spk_seg.end_time,
         )
 
-    # Stage 4: SRT generation
+        transcripts = transcriber.transcribe(segment_audio)
+        for t in transcripts:
+            all_segments.append(
+                TranscriptSegment(
+                    speaker_id=spk_seg.speaker_id,
+                    start_time=t.start_time,
+                    end_time=t.end_time,
+                    text=t.text,
+                )
+            )
+
+    if verbose:
+        console.print(
+            f"识别 {len(all_segments)} 个片段 ... 完成 ({time.time() - step_start:.1f}s)"
+        )
+
+    # Stage 5: SRT generation
     step += 1
     step_start = time.time()
     if verbose:
         console.print(f"[{step}/{total_stages}] 生成 SRT ...", end=" ")
     writer = SrtWriter(speaker_label=True)
-    writer.write(segments, output)
+    writer.write(all_segments, output)
     if verbose:
-        console.print(f"输出 {len(segments)} 条字幕 ... 完成 ({time.time() - step_start:.1f}s)")
+        console.print(f"输出 {len(all_segments)} 条字幕 ... 完成 ({time.time() - step_start:.1f}s)")
 
     if verbose:
         elapsed = time.time() - total_start
         console.print(f"{'─' * 40}")
         mins, secs = divmod(int(elapsed), 60)
         console.print(
-            f"[bold]总耗时:[/bold] {mins}m {secs}s | [bold]输出:[/bold] {output} ({len(segments)} 条字幕)"
+            f"[bold]总耗时:[/bold] {mins}m {secs}s | [bold]输出:[/bold] {output} ({len(all_segments)} 条字幕)"
         )
 
     return output
