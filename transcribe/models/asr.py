@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import torch
+
 from funasr import AutoModel
 
 from transcribe.data.types import AudioSegment, TranscriptSegment
@@ -85,3 +87,9 @@ class ASRTranscriber:
             )
 
         return segments
+
+    def cleanup(self) -> None:
+        """Release model from memory."""
+        del self._model
+        if self._device != "cpu" and torch.cuda.is_available():
+            torch.cuda.empty_cache()

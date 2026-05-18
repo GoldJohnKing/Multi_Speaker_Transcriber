@@ -175,6 +175,8 @@ def run_pipeline(
                 )
             )
 
+    transcriber.cleanup()
+
     if verbose:
         console.print(
             f"识别 {len(all_segments)} 个片段 ... 完成 ({time.time() - step_start:.1f}s)"
