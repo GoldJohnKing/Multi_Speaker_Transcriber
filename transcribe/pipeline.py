@@ -5,10 +5,13 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
+import numpy as np
+import torch
+import torchaudio.functional as TA_F
 from rich.console import Console
 
 from transcribe.config import load_config, resolve_device
-from transcribe.data.types import PipelineConfig, TranscriptSegment
+from transcribe.data.types import AudioSegment, PipelineConfig, TranscriptSegment
 from transcribe.models.audio_extractor import AudioExtractor
 from transcribe.models.asr import ASRTranscriber
 from transcribe.models.denoiser import Denoiser
@@ -16,9 +19,27 @@ from transcribe.models.srt_writer import SrtWriter
 
 console = Console()
 
+# ASR models expect 16 kHz input
+_ASR_SAMPLE_RATE = 16_000
+
 
 def _default_output_path(input_path: str) -> str:
     return str(Path(input_path).with_suffix(".srt"))
+
+
+def _resample(audio: AudioSegment, target_sr: int) -> AudioSegment:
+    """Resample audio to target sample rate."""
+    if audio.sample_rate == target_sr:
+        return audio
+    wav_t = torch.from_numpy(audio.waveform).unsqueeze(0)  # [1, T]
+    wav_t = TA_F.resample(wav_t, audio.sample_rate, target_sr)
+    waveform = np.ascontiguousarray(wav_t.squeeze(0).numpy(), dtype=np.float32)
+    return AudioSegment(
+        waveform=waveform,
+        sample_rate=target_sr,
+        start_time=audio.start_time,
+        end_time=audio.end_time,
+    )
 
 
 def run_pipeline(
@@ -54,12 +75,14 @@ def run_pipeline(
         console.print()
 
     # Stage 1: Audio extraction
+    # Use 48kHz when denoising (DeepFilterNet's native rate), 16kHz otherwise
+    extract_sr = 48_000 if config.denoise else _ASR_SAMPLE_RATE
     step = 1
     step_start = time.time()
     if verbose:
-        console.print(f"[{step}/{total_stages}] 提取音频 ...", end=" ")
+        console.print(f"[{step}/{total_stages}] 提取音频 ({extract_sr}Hz) ...", end=" ")
     extractor = AudioExtractor()
-    audio = extractor.extract(input_path)
+    audio = extractor.extract(input_path, sample_rate=extract_sr)
     if verbose:
         console.print(f"完成 ({time.time() - step_start:.1f}s)")
 
@@ -74,6 +97,10 @@ def run_pipeline(
         denoiser.cleanup()
         if verbose:
             console.print(f"完成 ({time.time() - step_start:.1f}s)")
+
+    # Resample to ASR sample rate if needed
+    if audio.sample_rate != _ASR_SAMPLE_RATE:
+        audio = _resample(audio, _ASR_SAMPLE_RATE)
 
     # Stage 3: ASR
     step += 1

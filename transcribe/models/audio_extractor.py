@@ -1,4 +1,4 @@
-"""Stage 1: Audio extraction — convert any video/audio to 16 kHz mono WAV."""
+"""Stage 1: Audio extraction — convert any video/audio to mono float32 WAV."""
 
 from __future__ import annotations
 
@@ -14,24 +14,27 @@ from transcribe.data.types import AudioSegment
 # Default FFmpeg path; can be overridden for testing or unusual setups.
 FFMPEG_PATH = os.environ.get("FFMPEG_PATH", "ffmpeg")
 
-TARGET_SAMPLE_RATE = 16_000
+# Default target sample rate for ASR
+DEFAULT_SAMPLE_RATE = 16_000
 
 
 class AudioExtractor:
     """Extract audio from video/audio files via FFmpeg and return an AudioSegment."""
 
-    def extract(self, input_path: str) -> AudioSegment:
-        """Convert *input_path* to a 16 kHz mono float32 AudioSegment.
+    def extract(self, input_path: str, sample_rate: int = DEFAULT_SAMPLE_RATE) -> AudioSegment:
+        """Convert *input_path* to a mono float32 AudioSegment.
 
         Parameters
         ----------
         input_path:
             Path to a video or audio file understood by FFmpeg.
+        sample_rate:
+            Target sample rate in Hz (default 16000 for ASR).
 
         Returns
         -------
         AudioSegment
-            Mono float32 waveform at 16 kHz with timing metadata.
+            Mono float32 waveform at the requested sample rate with timing metadata.
 
         Raises
         ------
@@ -46,7 +49,7 @@ class AudioExtractor:
         cmd = [
             FFMPEG_PATH,
             "-i", input_path,
-            "-ar", str(TARGET_SAMPLE_RATE),
+            "-ar", str(sample_rate),
             "-ac", "1",            # mono
             "-f", "wav",
             "pipe:1",              # write WAV to stdout

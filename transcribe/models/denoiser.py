@@ -33,9 +33,10 @@ _DF_SR = 48_000
 class Denoiser:
     """Noise suppression using DeepFilterNet."""
 
-    def __init__(self, device: str = "cpu", post_filter: bool = True) -> None:
+    def __init__(self, device: str = "cpu", post_filter: bool = False, model: str = "DeepFilterNet2") -> None:
         self._device = device
         self._post_filter = post_filter
+        self._model_name = model
         self._model, self._df_state = self._load_model()
 
     # ------------------------------------------------------------------
@@ -47,6 +48,7 @@ class Denoiser:
         from df import init_df
 
         model, df_state, suffix = init_df(
+            default_model=self._model_name,
             post_filter=self._post_filter,
             log_level="WARNING",
             log_file=None,
