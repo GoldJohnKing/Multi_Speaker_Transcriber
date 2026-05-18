@@ -61,7 +61,14 @@ class ASRTranscriber:
             if not text or not timestamps:
                 continue
 
-            if len(timestamps) >= 2:
+            # FunASR timestamp format: [[start_ms, end_ms], [start_ms, end_ms], ...]
+            # Each pair corresponds to one recognized character/word.
+            if timestamps and isinstance(timestamps[0], (list, tuple)):
+                # Nested format: [[start, end], ...]
+                start_time = timestamps[0][0] / 1000.0 + audio.start_time
+                end_time = timestamps[-1][1] / 1000.0 + audio.start_time
+            elif len(timestamps) >= 2:
+                # Flat format: [start, end, start, end, ...]
                 start_time = timestamps[0] / 1000.0 + audio.start_time
                 end_time = timestamps[-1] / 1000.0 + audio.start_time
             else:
