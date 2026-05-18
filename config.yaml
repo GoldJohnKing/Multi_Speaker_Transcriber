@@ -1,0 +1,28 @@
+device: auto
+denoise: true
+language: zh
+
+denoiser:
+  model: deepfilternet_v2
+  post_filter: true
+
+diarizer:
+  model: pyannote/speaker-diarization-3.1
+  hf_token: null
+  clustering: hidden_markov
+
+separator:
+  model: speechbrain/sepformer-whamr
+  max_segment_seconds: 10
+
+asr:
+  model: paraformer-zh
+  vad_model: fsmn-vad
+  punc_model: ct-punc
+  batch_size_s: 300
+
+srt:
+  max_chars_per_line: 20
+  min_duration: 1.0
+  merge_gap: 0.5
+  speaker_label: true
