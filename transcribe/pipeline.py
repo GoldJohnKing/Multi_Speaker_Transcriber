@@ -11,6 +11,7 @@ from transcribe.config import load_config, resolve_device
 from transcribe.data.types import PipelineConfig, TranscriptSegment
 from transcribe.models.audio_extractor import AudioExtractor
 from transcribe.models.asr import ASRTranscriber
+from transcribe.models.denoiser import Denoiser
 from transcribe.models.srt_writer import SrtWriter
 
 console = Console()
@@ -44,24 +45,41 @@ def run_pipeline(
     output = output_path or _default_output_path(input_path)
     total_start = time.time()
 
+    # Determine total stages for progress display
+    total_stages = 3 + (1 if config.denoise else 0)
+
     if verbose:
         console.print(f"[bold]设备:[/bold] {device}")
         console.print(f"[bold]输入:[/bold] {input_path}")
         console.print()
 
     # Stage 1: Audio extraction
+    step = 1
     step_start = time.time()
     if verbose:
-        console.print("[1/3] 提取音频 ...", end=" ")
+        console.print(f"[{step}/{total_stages}] 提取音频 ...", end=" ")
     extractor = AudioExtractor()
     audio = extractor.extract(input_path)
     if verbose:
         console.print(f"完成 ({time.time() - step_start:.1f}s)")
 
-    # Stage 2: ASR
+    # Stage 2: Noise suppression (optional)
+    if config.denoise:
+        step += 1
+        step_start = time.time()
+        if verbose:
+            console.print(f"[{step}/{total_stages}] 噪声抑制 ...", end=" ")
+        denoiser = Denoiser(device=device)
+        audio = denoiser.process(audio)
+        denoiser.cleanup()
+        if verbose:
+            console.print(f"完成 ({time.time() - step_start:.1f}s)")
+
+    # Stage 3: ASR
+    step += 1
     step_start = time.time()
     if verbose:
-        console.print("[2/3] 语音转文字 ...", end=" ")
+        console.print(f"[{step}/{total_stages}] 语音转文字 ...", end=" ")
     transcriber = ASRTranscriber(device=device, hotword_path=config.hotwords)
     segments = transcriber.transcribe(audio)
     if verbose:
@@ -69,10 +87,11 @@ def run_pipeline(
             f"识别 {len(segments)} 个片段 ... 完成 ({time.time() - step_start:.1f}s)"
         )
 
-    # Stage 3: SRT generation
+    # Stage 4: SRT generation
+    step += 1
     step_start = time.time()
     if verbose:
-        console.print("[3/3] 生成 SRT ...", end=" ")
+        console.print(f"[{step}/{total_stages}] 生成 SRT ...", end=" ")
     writer = SrtWriter(speaker_label=True)
     writer.write(segments, output)
     if verbose:
