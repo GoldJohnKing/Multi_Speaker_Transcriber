@@ -18,6 +18,7 @@ def main() -> None:
             "hotwords": args.hotwords,
             "num_speakers": args.num_speakers,
             "cache_dir": args.cache_dir,
+            "speaker_references": args.speaker_ref,
         },
     )
     run_pipeline(

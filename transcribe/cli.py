@@ -40,6 +40,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Enable target speaker extraction using video face tracking (requires video input, mutually exclusive with --separate)",
     )
     parser.add_argument(
+        "--speaker-ref",
+        metavar="DIR",
+        help="Directory of speaker audio samples (filename without extension = speaker name)",
+    )
+    parser.add_argument(
         "--device",
         choices=["cpu", "cuda", "auto"],
         default="auto",
