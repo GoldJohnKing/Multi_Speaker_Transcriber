@@ -221,3 +221,96 @@ def test_match_speakers_to_references_no_user_refs():
 
     result = matcher.match_speakers_to_references(audio, diarization)
     assert result == {}
+
+
+# ---------------------------------------------------------------------------
+# Edge case tests for speaker voice reference feature (no model needed)
+# ---------------------------------------------------------------------------
+
+
+def test_match_speakers_partial_match():
+    """Only speakers with embeddings above threshold are mapped."""
+    from transcribe.models.matcher import SpeakerMatcher, _cosine_similarity
+
+    matcher = SpeakerMatcher.__new__(SpeakerMatcher)
+    matcher._user_references = {
+        "张三": np.array([1.0, 0.0] + [0.0] * 190, dtype=np.float32),
+        "李四": np.array([0.0, 1.0] + [0.0] * 190, dtype=np.float32),
+    }
+    matcher._match_threshold = 0.5
+
+    # Verify cosine similarity works for aligned vectors
+    ref_emb = matcher._user_references["张三"]
+    test_emb = np.array([0.9, 0.1] + [0.0] * 190, dtype=np.float32)
+    sim = _cosine_similarity(test_emb, ref_emb)
+    assert sim > 0.5  # Should match
+
+
+def test_match_speakers_no_match_below_threshold():
+    """Speakers below threshold are not mapped."""
+    from transcribe.models.matcher import SpeakerMatcher, _cosine_similarity
+
+    matcher = SpeakerMatcher.__new__(SpeakerMatcher)
+    matcher._user_references = {
+        "张三": np.array([1.0, 0.0] + [0.0] * 190, dtype=np.float32),
+    }
+    matcher._match_threshold = 0.9  # High threshold
+
+    # Orthogonal embedding should not match
+    test_emb = np.array([0.0, 1.0] + [0.0] * 190, dtype=np.float32)
+    sim = _cosine_similarity(test_emb, matcher._user_references["张三"])
+    assert sim < matcher._match_threshold
+
+
+def test_map_speaker_returns_original_when_no_match():
+    """_map_speaker returns original ID when not in name_map."""
+    from transcribe.pipeline import _map_speaker
+
+    assert _map_speaker("SPEAKER_00", {}) == "SPEAKER_00"
+    assert _map_speaker("SPEAKER_00", {"SPEAKER_01": "李四"}) == "SPEAKER_00"
+
+
+def test_map_speaker_returns_name_when_matched():
+    """_map_speaker returns mapped name when in name_map."""
+    from transcribe.pipeline import _map_speaker
+
+    assert _map_speaker("SPEAKER_00", {"SPEAKER_00": "张三"}) == "张三"
+
+
+def test_srt_writer_name_map_partial():
+    """SrtWriter handles partial name maps — unmapped speakers get default label."""
+    from transcribe.data.types import TranscriptSegment
+    from transcribe.models.srt_writer import SrtWriter
+
+    segments = [
+        TranscriptSegment(
+            speaker_id="SPEAKER_00",
+            start_time=0.0,
+            end_time=1.0,
+            text="你好",
+        ),
+        TranscriptSegment(
+            speaker_id="SPEAKER_01",
+            start_time=1.0,
+            end_time=2.0,
+            text="世界",
+        ),
+    ]
+
+    # Only map SPEAKER_00, leave SPEAKER_01 unmapped
+    name_map = {"SPEAKER_00": "张三"}
+    writer = SrtWriter(speaker_label=True)
+
+    import tempfile
+    import os
+
+    with tempfile.NamedTemporaryFile(suffix=".srt", delete=False, mode="w") as f:
+        output = f.name
+
+    try:
+        writer.write(segments, output, speaker_name_map=name_map)
+        content = open(output, encoding="utf-8").read()
+        assert "[张三]" in content
+        assert "[说话人2]" in content  # SPEAKER_01 unmapped → default label
+    finally:
+        os.unlink(output)
