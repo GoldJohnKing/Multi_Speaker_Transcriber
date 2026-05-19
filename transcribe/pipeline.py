@@ -54,11 +54,6 @@ def _non_overlap_ranges(
     return ranges
 
 
-def _map_speaker(speaker_id: str, name_map: dict[str, str]) -> str:
-    """Map SPEAKER_XX to user-provided name if available."""
-    return name_map.get(speaker_id, speaker_id)
-
-
 def run_pipeline(
     input_path: str,
     output_path: str | None = None,
@@ -156,6 +151,11 @@ def run_pipeline(
 
     # ── Speaker reference matching (optional) ──────────────────────────
     speaker_name_map: dict[str, str] = {}
+    if config.speaker_references and not config.diarize:
+        console.print(
+            "[bold yellow]警告: --speaker-ref 需要 --diarize（默认启用），"
+            "当前 --no-diarize 已关闭说话人识别，声纹匹配将被跳过[/bold yellow]"
+        )
     if config.speaker_references and diarization:
         from transcribe.models.matcher import SpeakerMatcher
 
@@ -264,7 +264,7 @@ def run_pipeline(
         for t in transcripts:
             all_segments.append(
                 TranscriptSegment(
-                    speaker_id=_map_speaker("SPEAKER_00", speaker_name_map),
+                    speaker_id="SPEAKER_00",
                     start_time=t.start_time,
                     end_time=t.end_time,
                     text=t.text,
@@ -337,7 +337,7 @@ def run_pipeline(
             for t in transcripts:
                 all_segments.append(
                     TranscriptSegment(
-                        speaker_id=_map_speaker(spk_seg.speaker_id, speaker_name_map),
+                        speaker_id=spk_seg.speaker_id,
                         start_time=t.start_time,
                         end_time=t.end_time,
                         text=t.text,
@@ -383,7 +383,7 @@ def run_pipeline(
                 for t in transcripts:
                     all_segments.append(
                         TranscriptSegment(
-                            speaker_id=_map_speaker(spk_id, speaker_name_map),
+                            speaker_id=spk_id,
                             start_time=t.start_time,
                             end_time=t.end_time,
                             text=t.text,
@@ -418,7 +418,7 @@ def run_pipeline(
                 for t in transcripts:
                     all_segments.append(
                         TranscriptSegment(
-                            speaker_id=_map_speaker(spk_seg.speaker_id, speaker_name_map),
+                            speaker_id=spk_seg.speaker_id,
                             start_time=t.start_time,
                             end_time=t.end_time,
                             text=t.text,
@@ -449,7 +449,7 @@ def run_pipeline(
             for t in transcripts:
                 all_segments.append(
                     TranscriptSegment(
-                        speaker_id=_map_speaker(spk_seg.speaker_id, speaker_name_map),
+                        speaker_id=spk_seg.speaker_id,
                         start_time=t.start_time,
                         end_time=t.end_time,
                         text=t.text,

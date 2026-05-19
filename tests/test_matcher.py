@@ -262,21 +262,6 @@ def test_match_speakers_no_match_below_threshold():
     assert sim < matcher._match_threshold
 
 
-def test_map_speaker_returns_original_when_no_match():
-    """_map_speaker returns original ID when not in name_map."""
-    from transcribe.pipeline import _map_speaker
-
-    assert _map_speaker("SPEAKER_00", {}) == "SPEAKER_00"
-    assert _map_speaker("SPEAKER_00", {"SPEAKER_01": "李四"}) == "SPEAKER_00"
-
-
-def test_map_speaker_returns_name_when_matched():
-    """_map_speaker returns mapped name when in name_map."""
-    from transcribe.pipeline import _map_speaker
-
-    assert _map_speaker("SPEAKER_00", {"SPEAKER_00": "张三"}) == "张三"
-
-
 def test_srt_writer_name_map_partial():
     """SrtWriter handles partial name maps — unmapped speakers get default label."""
     from transcribe.data.types import TranscriptSegment
