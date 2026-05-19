@@ -54,6 +54,11 @@ def _non_overlap_ranges(
     return ranges
 
 
+def _map_speaker(speaker_id: str, name_map: dict[str, str]) -> str:
+    """Map SPEAKER_XX to user-provided name if available."""
+    return name_map.get(speaker_id, speaker_id)
+
+
 def run_pipeline(
     input_path: str,
     output_path: str | None = None,
@@ -91,6 +96,8 @@ def run_pipeline(
     if verbose:
         console.print(f"[bold]设备:[/bold] {device}")
         console.print(f"[bold]输入:[/bold] {input_path}")
+        if config.speaker_references:
+            console.print(f"[bold]声样目录:[/bold] {config.speaker_references}")
         console.print()
 
     # ── Stage 1: Audio extraction ───────────────────────────────────────
@@ -146,6 +153,33 @@ def run_pipeline(
                 f"{len(diarization.overlap_regions)} 个重叠区域 ... "
                 f"完成 ({time.time() - step_start:.1f}s)"
             )
+
+    # ── Speaker reference matching (optional) ──────────────────────────
+    speaker_name_map: dict[str, str] = {}
+    if config.speaker_references and diarization:
+        from transcribe.models.matcher import SpeakerMatcher
+
+        ref_matcher = SpeakerMatcher(device=device)
+        try:
+            ref_matcher.register_speakers(config.speaker_references)
+            speaker_name_map = ref_matcher.match_speakers_to_references(
+                audio, diarization
+            )
+            if verbose and speaker_name_map:
+                console.print(
+                    "  说话人匹配: "
+                    + ", ".join(
+                        f"{sid} → {name}"
+                        for sid, name in speaker_name_map.items()
+                    )
+                )
+        except (FileNotFoundError, ValueError) as e:
+            if verbose:
+                console.print(
+                    f"[bold yellow]警告: 说话人声样加载失败: {e}[/bold yellow]"
+                )
+        finally:
+            ref_matcher.cleanup()
 
     # ── Stage 4: Speech separation or TSE ──────────────────────────────
     overlap_separated: dict[tuple[float, float], list[AudioSegment]] = {}
@@ -230,7 +264,7 @@ def run_pipeline(
         for t in transcripts:
             all_segments.append(
                 TranscriptSegment(
-                    speaker_id="SPEAKER_00",
+                    speaker_id=_map_speaker("SPEAKER_00", speaker_name_map),
                     start_time=t.start_time,
                     end_time=t.end_time,
                     text=t.text,
@@ -303,7 +337,7 @@ def run_pipeline(
             for t in transcripts:
                 all_segments.append(
                     TranscriptSegment(
-                        speaker_id=spk_seg.speaker_id,
+                        speaker_id=_map_speaker(spk_seg.speaker_id, speaker_name_map),
                         start_time=t.start_time,
                         end_time=t.end_time,
                         text=t.text,
@@ -349,7 +383,7 @@ def run_pipeline(
                 for t in transcripts:
                     all_segments.append(
                         TranscriptSegment(
-                            speaker_id=spk_id,
+                            speaker_id=_map_speaker(spk_id, speaker_name_map),
                             start_time=t.start_time,
                             end_time=t.end_time,
                             text=t.text,
@@ -384,7 +418,7 @@ def run_pipeline(
                 for t in transcripts:
                     all_segments.append(
                         TranscriptSegment(
-                            speaker_id=spk_seg.speaker_id,
+                            speaker_id=_map_speaker(spk_seg.speaker_id, speaker_name_map),
                             start_time=t.start_time,
                             end_time=t.end_time,
                             text=t.text,
@@ -415,7 +449,7 @@ def run_pipeline(
             for t in transcripts:
                 all_segments.append(
                     TranscriptSegment(
-                        speaker_id=spk_seg.speaker_id,
+                        speaker_id=_map_speaker(spk_seg.speaker_id, speaker_name_map),
                         start_time=t.start_time,
                         end_time=t.end_time,
                         text=t.text,
@@ -435,7 +469,7 @@ def run_pipeline(
     if verbose:
         console.print(f"[{step}/{total_stages}] 生成 SRT ...", end=" ")
     writer = SrtWriter(speaker_label=config.diarize)
-    writer.write(all_segments, output)
+    writer.write(all_segments, output, speaker_name_map=speaker_name_map)
     if verbose:
         console.print(f"输出 {len(all_segments)} 条字幕 ... 完成 ({time.time() - step_start:.1f}s)")
 
