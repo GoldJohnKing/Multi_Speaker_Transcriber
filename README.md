@@ -8,9 +8,10 @@
 
 - 完全离线运行，无需联网
 - 全程 16kHz 统一采样率，无重采样损耗
-- SNR 自适应降噪门控（音频干净时自动跳过）
+- SNR 自适应降噪门控（音频干净时自动跳过，需 `--denoise` 或 `--tse` 启用）
 - 支持盲源分离（ClearVoice SS）和目标说话人提取（ClearVoice TSE）
 - 声纹嵌入余弦相似度匹配，分离音轨自动关联说话人标签
+- 说话人声纹参考匹配，通过参考音频自动标注说话人姓名
 - 热词增强 + 标点修复，提高领域专有词汇识别率
 - AMD ROCm 兼容（自动修补 ClearVoice GPU 检测）
 
@@ -23,6 +24,7 @@
 - [配置文件](#配置文件)
 - [项目结构](#项目结构)
 - [开源依赖](#开源依赖)
+- [说话人参考音频](#说话人参考音频)
 - [开发与测试](#开发与测试)
 
 ---
@@ -111,7 +113,10 @@ uv run python -m transcribe input.mp4 --tse -o output.srt -v
 uv run python -m transcribe input.mp4 --num-speakers 3 -o output.srt -v
 
 # 使用热词文件
-uv run python -m transcribe input.mp4 --hotwords hotwords/my_dict.txt -o output.srt -v
+uv run python -m transcribe input.mp4 --hotwords hotwords/example.txt -o output.srt -v
+
+# 使用参考音频自动标注说话人姓名
+uv run python -m transcribe input.mp4 --speaker-ref speakers/ -o output.srt -v
 ```
 
 ### 输出示例
@@ -119,15 +124,15 @@ uv run python -m transcribe input.mp4 --hotwords hotwords/my_dict.txt -o output.
 ```
 1
 00:00:01,200 --> 00:00:04,500
-[说话人1] 大家好欢迎来到这一期的节目
+[张三] 大家好欢迎来到这一期的节目
 
 2
 00:00:04,800 --> 00:00:07,200
-[说话人2] 今天我们来聊一个很有意思的话题
+[李四] 今天我们来聊一个很有意思的话题
 
 3
 00:00:07,500 --> 00:00:10,100
-[说话人1] 对，这个话题我之前就一直想讨论
+[张三] 对，这个话题我之前就一直想讨论
 ```
 
 ---
@@ -136,9 +141,9 @@ uv run python -m transcribe input.mp4 --hotwords hotwords/my_dict.txt -o output.
 
 ```
 usage: transcribe [-h] [-o OUTPUT] [--hotwords FILE] [--num-speakers N]
-                  [--denoise] [--no-diarize] [--separate] [--tse]
-                  [--device {cpu,cuda,auto}] [--cache-dir DIR]
-                  [--config FILE] [--keep-cache] [-v]
+                  [--speaker-ref DIR] [--denoise] [--no-diarize] 
+                  [--separate] [--tse] [--device {cpu,cuda,auto}]
+                  [--cache-dir DIR] [--config FILE] [--keep-cache] [-v]
                   input
 
 位置参数:
@@ -148,7 +153,8 @@ usage: transcribe [-h] [-o OUTPUT] [--hotwords FILE] [--num-speakers N]
   -o, --output           输出 SRT 文件路径（默认: 输入文件名.srt）
   --hotwords FILE        热词文件路径（每行一个词）
   --num-speakers N       已知说话人数量（默认自动检测）
-  --denoise              启用噪声抑制（SNR 门控自适应）
+  --speaker-ref DIR      说话人参考音频目录（文件名即说话人名）
+  --denoise              启用噪声抑制（SNR 门控，干净音频自动跳过）
   --no-diarize           禁用说话人识别（纯 ASR 模式）
   --separate             启用重叠语音分离 + 声纹匹配
   --tse                  启用目标说话人提取（需视频输入，与 --separate 互斥）
@@ -167,9 +173,11 @@ usage: transcribe [-h] [-o OUTPUT] [--hotwords FILE] [--num-speakers N]
 | `--no-diarize` | 纯 ASR，无说话人标签，速度最快 |
 | `--denoise` | 噪声抑制 → ASR + 说话人识别 |
 | `--denoise --separate` | 降噪 → 识别 → 重叠分离 → 声纹匹配 → ASR |
-| `--tse` | 降噪 → 识别 → 人脸追踪 TSE → 声纹匹配 → ASR |
+| `--tse` | 降噪评估（SNR 门控，可能跳过）→ 识别 → 人脸追踪 TSE → 声纹匹配 → ASR |
 | `--tse` + 音频文件 | 报错（TSE 需要视频文件） |
 | `--tse --separate` | 报错（两者互斥） |
+| `--speaker-ref DIR` | 说话人识别后，通过参考音频将 `[说话人N]` 替换为实际姓名 |
+| `--speaker-ref` + `--no-diarize` | 参考匹配跳过（需说话人识别） |
 
 ---
 
@@ -186,13 +194,21 @@ usage: transcribe [-h] [-o OUTPUT] [--hotwords FILE] [--num-speakers N]
                 ▼
 ┌─────────────────────────────────┐
 │  Stage 2: 噪声抑制 (--denoise)  │  ClearVoice MossFormerGAN_SE_16K
-│  SNR < 25dB 时启用              │  SNR 门控：音频干净则自动跳过
+│  SNR < 25dB 时实际执行          │  SNR 门控：音频干净则自动跳过
+│  (--tse 也会进入降噪评估流程)    │  需显式 --denoise 或 --tse 启用
 └───────────────┬─────────────────┘
                 │
                 ▼
 ┌─────────────────────────────────┐
 │  Stage 3: 说话人识别            │  Pyannote 3.1
 │  (默认启用, --no-diarize 关闭)  │  输出: 说话人片段 + 重叠区域
+└───────────────┬─────────────────┘
+                │
+                ▼
+┌─────────────────────────────────┐
+│  Stage 3.5: 说话人参考匹配     │  SpeechBrain ECAPA-TDNN
+│  (--speaker-ref DIR)            │  参考音频 → 声纹嵌入 → 姓名标注
+│  将 SPEAKER_XX 映射为实际姓名   │  需要 Stage 3 已启用
 └───────────────┬─────────────────┘
                 │
           ┌─────┴─────────────┐
@@ -245,6 +261,10 @@ AudioSegment ──→ (Denoiser) ──→ AudioSegment
                               track_idx → speaker_id
                                        │
                                        ▼
+                              (--speaker-ref)
+                              SPEAKER_XX → 实际姓名
+                                       │
+                                       ▼
                               TranscriptSegment[]
                                        │
                                        ▼
@@ -256,11 +276,14 @@ AudioSegment ──→ (Denoiser) ──→ AudioSegment
 #### Stage 1 — 音频提取
 使用 FFmpeg 将任意格式的视频/音频转为 16kHz 单声道 float32 WAV。支持 MP4、MKV、AVI、MP3、WAV 等常见格式。
 
-#### Stage 2 — 噪声抑制（可选）
-使用 ClearVoice 的 `MossFormerGAN_SE_16K` 语音增强模型。内置 SNR（信噪比）估计器，仅在 SNR < 25dB 时启动降噪，避免对干净音频的过度处理。16kHz 原生处理，无需重采样。
+#### Stage 2 — 噪声抑制（可选，需 `--denoise` 或 `--tse` 启用）
+使用 ClearVoice 的 `MossFormerGAN_SE_16K` 语音增强模型。内置 SNR（信噪比）估计器，仅在 SNR < 25dB 时启动降噪，避免对干净音频的过度处理。16kHz 原生处理，无需重采样。**注意：** 此阶段默认不启用——必须通过 `--denoise` 或 `--tse` 显式开启；`--tse` 模式会进入降噪评估流程（但 SNR ≥ 25dB 时仍会跳过实际降噪）。未指定这两个标志时，即使音频噪声较大也不会执行降噪。
 
 #### Stage 3 — 说话人识别
 使用 Pyannote Audio 3.1 进行说话人分割。输出每个说话人的时间片段（`SpeakerSegment`）及重叠区域列表（`overlap_regions`）。支持 `--num-speakers` 提示已知说话人数量以提高准确性。
+
+#### Stage 3.5 — 说话人参考匹配（可选，`--speaker-ref DIR`）
+当提供说话人参考音频目录时，使用 SpeechBrain ECAPA-TDNN 提取 192 维声纹嵌入，通过余弦相似度将匿名说话人标签（`SPEAKER_00` 等）关联到参考音频文件名（即说话人姓名）。例如目录下放置 `张三.wav`、`李四.wav`，输出中将显示 `[张三]`、`[李四]` 而非 `[说话人1]`、`[说话人2]`。此阶段需要说话人识别（Stage 3）已启用。
 
 #### Stage 4 — 重叠语音分离（可选，`--separate`）
 对说话人识别检测到的重叠区域，使用 ClearVoice `MossFormer2_SS_16K` 盲源分离模型将混合语音拆分为独立说话人音轨。
@@ -275,7 +298,7 @@ AudioSegment ──→ (Denoiser) ──→ AudioSegment
 使用 FunASR SeACo-Paraformer 中文语音识别模型，配合 FSMN-VAD 语音活动检测和 ct-punc 标点恢复。支持热词文件增强领域词汇识别率，并内置热词标点修复逻辑——ct-punc 可能会在热词内部插入标点（如"朽，叶"→"朽叶"），此模块自动修复。
 
 #### Stage 6 — SRT 生成
-将转录片段排序、合并相邻同说话人片段，生成标准 SRT 字幕文件。说话人标签格式为 `[说话人1]`、`[说话人2]` 等。
+将转录片段排序、合并相邻同说话人片段，生成标准 SRT 字幕文件。说话人标签格式默认为 `[说话人1]`、`[说话人2]` 等；若提供了 `--speaker-ref` 参考音频，则替换为实际姓名（如 `[张三]`、`[李四]`）。
 
 ---
 
@@ -290,6 +313,7 @@ diarize: true             # 说话人识别
 separate: false           # 重叠语音分离
 tse: false                # 目标说话人提取
 language: zh              # 语言（当前仅支持中文）
+speaker_references: null  # 说话人参考音频目录路径
 
 denoiser:
   model: MossFormerGAN_SE_16K
@@ -328,6 +352,8 @@ srt:
 
 配置优先级：**CLI 参数 > YAML 配置文件 > 代码默认值**。
 
+> **注意：** `config.yaml` 中的顶层字段（`device`、`denoise`、`diarize` 等）会在运行时加载并生效；下方的子配置段（`denoiser:`、`diarizer:`、`separator:` 等）目前仅作参数参考，实际模型参数硬编码在各模型类的构造函数中。
+
 ---
 
 ## 项目结构
@@ -350,17 +376,18 @@ Multi_Speaker_Transcribe/
 │       ├── audio_extractor.py         # Stage 1: FFmpeg 音频提取
 │       ├── denoiser.py                # Stage 2: ClearVoice 噪声抑制
 │       ├── diarizer.py                # Stage 3: Pyannote 说话人识别
+│       ├── matcher.py                 # Stage 3.5/4.5: 声纹嵌入匹配
 │       ├── separator.py              # Stage 4: ClearVoice 重叠分离
 │       ├── extractor.py              # Stage 4A: ClearVoice TSE 提取
-│       ├── matcher.py                # Stage 4.5: 声纹嵌入匹配
 │       ├── asr.py                    # Stage 5: FunASR 语音识别
 │       ├── srt_writer.py             # Stage 6: SRT 生成
 │       ├── rocm_compat.py            # AMD ROCm 兼容补丁
 │       └── __init__.py
 ├── tests/                             # 测试目录
 ├── hotwords/                          # 热词文件目录
-├── docs/                              # 设计文档
-└── samples/                           # 测试样本（gitignore）
+│   └── example.txt                    # 示例热词文件
+├── samples/                           # 测试样本（gitignore）
+└── checkpoints/                       # 预训练模型权重（gitignore）
 ```
 
 ### 核心数据类型
@@ -371,7 +398,37 @@ Multi_Speaker_Transcribe/
 | `SpeakerSegment` | 说话人时间片段（说话人 ID + 起止时间 + 是否重叠） |
 | `DiarizationResult` | 说话人识别结果（片段列表 + 说话人数量 + 重叠区域） |
 | `TranscriptSegment` | 转录片段（说话人 ID + 起止时间 + 文本） |
-| `PipelineConfig` | 管线配置 |
+| `PipelineConfig` | 管线配置（含 `speaker_references` 参考音频目录） |
+
+---
+
+## 说话人参考音频
+
+`--speaker-ref` 参数允许你提供一组已知说话人的参考音频，自动将匿名标签（`说话人1`、`说话人2`）替换为实际姓名。
+
+### 使用方法
+
+1. 创建目录，放入参考音频文件（WAV 格式），**文件名（不含扩展名）即为说话人姓名**：
+
+```
+speakers/
+├── 张三.wav
+├── 李四.wav
+└── 王五.wav
+```
+
+2. 运行管线时指定参考音频目录：
+
+```bash
+uv run python -m transcribe input.mp4 --speaker-ref speakers/ -o output.srt -v
+```
+
+### 工作原理
+
+- 使用 SpeechBrain ECAPA-TDNN 为每段参考音频提取 192 维声纹嵌入
+- 对说话人识别产生的每个说话人片段，提取嵌入并通过余弦相似度匹配
+- 相似度最高的参考音频名作为说话人标签
+- 需要说话人识别（Stage 3）已启用；若使用 `--no-diarize`，参考匹配将跳过并发出警告
 
 ---
 
@@ -390,8 +447,10 @@ Multi_Speaker_Transcribe/
 | [NumPy](https://numpy.org/) | 数值计算 | BSD-3-Clause |
 | [Rich](https://github.com/Textualize/rich) | 终端彩色输出 | MIT |
 | [PyYAML](https://github.com/yaml/pyyaml) | YAML 配置文件解析 | MIT |
-| [soundfile](https://github.com/bastibe/python-soundfile) | WAV 音频读写 | BSD-3-Clause |
+| [SoundFile](https://github.com/bastibe/python-soundfile) | WAV 音频读写 | BSD-3-Clause |
 | [ModelScope](https://github.com/modelscope/modelscope) | 模型下载与管理 | Apache-2.0 |
+| [OpenCV](https://opencv.org/) | 视频帧提取（TSE 模式） | Apache-2.0 |
+| [TorchVision](https://pytorch.org/vision/) | 视频处理（TSE 模式） | BSD-3-Clause |
 
 ---
 
@@ -410,6 +469,23 @@ uv run pytest -m "not slow"
 # 运行特定模块测试
 uv run pytest tests/test_srt_writer.py -v
 ```
+
+### 测试文件
+
+| 测试文件 | 覆盖范围 |
+|----------|----------|
+| `test_types.py` | 核心数据类型（5 个 dataclass） |
+| `test_config.py` | 配置加载（默认值、YAML、CLI 覆盖） |
+| `test_audio_extractor.py` | FFmpeg 音频提取 |
+| `test_srt_writer.py` | SRT 生成（时间戳、标签、合并、排序） |
+| `test_asr.py` | ASR 转录 + 热词修复 |
+| `test_diarizer.py` | 说话人识别（mock） |
+| `test_denoiser.py` | 噪声抑制 |
+| `test_separator.py` | 重叠语音分离 |
+| `test_extractor.py` | 目标说话人提取 |
+| `test_matcher.py` | 声纹匹配（余弦相似度、参考匹配） |
+| `test_pipeline_basic.py` | CLI 解析 + 参数互斥 |
+| `test_pipeline_full.py` | 完整管线集成测试 |
 
 ### 测试标记
 

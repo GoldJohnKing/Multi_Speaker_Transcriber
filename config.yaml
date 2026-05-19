@@ -4,6 +4,7 @@ diarize: true
 separate: false
 tse: false
 language: zh
+speaker_references: null
 
 denoiser:
   model: MossFormerGAN_SE_16K
