@@ -224,3 +224,30 @@ class TestCustomSpeakerNames:
         assert "[张三]" in content
         assert "[李四]" in content
         assert "说话人" not in content
+
+    def test_partial_name_map(self, tmp_path: Path) -> None:
+        """Unmapped speakers get default label, mapped speakers get custom name."""
+        segments = [
+            TranscriptSegment(
+                speaker_id="SPEAKER_00",
+                start_time=0.0,
+                end_time=1.0,
+                text="你好",
+            ),
+            TranscriptSegment(
+                speaker_id="SPEAKER_01",
+                start_time=1.0,
+                end_time=2.0,
+                text="世界",
+            ),
+        ]
+
+        # Only map SPEAKER_00, leave SPEAKER_01 unmapped
+        name_map = {"SPEAKER_00": "张三"}
+        writer = SrtWriter(speaker_label=True)
+        output = str(tmp_path / "out.srt")
+        writer.write(segments, output, speaker_name_map=name_map)
+
+        content = Path(output).read_text(encoding="utf-8")
+        assert "[张三]" in content
+        assert "[说话人2]" in content  # SPEAKER_01 unmapped → default label

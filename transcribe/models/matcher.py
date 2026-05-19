@@ -63,19 +63,19 @@ def _extract_embedding(
     return embedding.squeeze()
 
 
-def _load_reference_audio(audio_path: str, sample_rate: int = 16_000) -> np.ndarray:
+def _load_reference_audio(
+    audio_path: str, extractor, sample_rate: int = 16_000
+) -> np.ndarray:
     """Load an audio file and resample to target sample rate via FFmpeg.
 
     Args:
         audio_path: Path to audio file.
+        extractor: AudioExtractor instance to reuse.
         sample_rate: Target sample rate.
 
     Returns:
         1-D float32 waveform at the target sample rate.
     """
-    from transcribe.models.audio_extractor import AudioExtractor
-
-    extractor = AudioExtractor()
     segment = extractor.extract(audio_path, sample_rate=sample_rate)
     return segment.waveform
 
@@ -172,13 +172,17 @@ class SpeakerMatcher:
                 f"Speaker reference directory not found: {reference_dir}"
             )
 
+        from transcribe.models.audio_extractor import AudioExtractor
+
+        extractor = AudioExtractor()
+
         embeddings: dict[str, np.ndarray] = {}
         for filepath in sorted(ref_path.iterdir()):
             if filepath.suffix.lower() not in _SUPPORTED_AUDIO_EXTS:
                 continue
 
             speaker_name = filepath.stem
-            waveform = _load_reference_audio(str(filepath))
+            waveform = _load_reference_audio(str(filepath), extractor)
             embedding = _extract_embedding(waveform, 16_000, self._model)
             if embedding is not None:
                 embeddings[speaker_name] = embedding
