@@ -134,7 +134,7 @@ class Separator:
     def __init__(
         self,
         device: str = "cpu",
-        model_name: str = "speechbrain/sepformer-whamr",
+        model_name: str = "speechbrain/sepformer-whamr16k",
         max_segment_seconds: float = 10.0,
     ) -> None:
         self._device = device

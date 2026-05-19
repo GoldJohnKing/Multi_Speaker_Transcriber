@@ -162,7 +162,7 @@ class PipelineConfig:
 
 - **Input**: `AudioSegment` + `DiarizationResult`
 - **Output**: `list[AudioSegment]` (separated per-speaker audio for overlap regions, with original time offsets)
-- **Model**: SpeechBrain SepFormer (`speechbrain/sepformer-whamr`)
+- **Model**: SpeechBrain SepFormer (`speechbrain/sepformer-whamr16k`, native 16kHz)
 - **Default**: Disabled. Enabled via `--separate` CLI flag or `separate: true` in config. Requires diarization to be enabled.
 - **Behavior**:
   - Crop only the audio corresponding to `overlap_regions` (non-overlap regions pass through unchanged)
@@ -297,7 +297,7 @@ diarizer:
 
 # Speech separation (overlap regions only, requires --separate)
 separator:
-  model: speechbrain/sepformer-whamr
+  model: speechbrain/sepformer-whamr16k
   max_segment_seconds: 10    # Max fragment length per separation pass
 
 # Speech recognition

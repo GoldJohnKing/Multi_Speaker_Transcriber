@@ -462,7 +462,7 @@ diarizer:
   clustering: hidden_markov
 
 separator:
-  model: speechbrain/sepformer-whamr
+  model: speechbrain/sepformer-whamr16k
   max_segment_seconds: 10
 
 asr:
