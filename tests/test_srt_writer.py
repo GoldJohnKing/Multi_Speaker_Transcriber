@@ -191,3 +191,36 @@ class TestSpeakerLabel:
 
     def test_unknown_id(self) -> None:
         assert SrtWriter._speaker_label("unknown") == "unknown"
+
+
+# ------------------------------------------------------------------
+# speaker_name_map
+# ------------------------------------------------------------------
+
+class TestCustomSpeakerNames:
+    def test_custom_speaker_names(self, tmp_path: Path) -> None:
+        """SrtWriter uses speaker_name_map for display labels."""
+        segments = [
+            TranscriptSegment(
+                speaker_id="SPEAKER_00",
+                start_time=0.0,
+                end_time=1.0,
+                text="你好",
+            ),
+            TranscriptSegment(
+                speaker_id="SPEAKER_01",
+                start_time=1.0,
+                end_time=2.0,
+                text="世界",
+            ),
+        ]
+
+        name_map = {"SPEAKER_00": "张三", "SPEAKER_01": "李四"}
+        writer = SrtWriter(speaker_label=True)
+        output = str(tmp_path / "out.srt")
+        writer.write(segments, output, speaker_name_map=name_map)
+
+        content = Path(output).read_text(encoding="utf-8")
+        assert "[张三]" in content
+        assert "[李四]" in content
+        assert "说话人" not in content

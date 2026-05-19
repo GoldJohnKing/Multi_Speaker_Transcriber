@@ -38,12 +38,19 @@ class SrtWriter:
     # Public API
     # ------------------------------------------------------------------
 
-    def write(self, segments: list[TranscriptSegment], output_path: str) -> None:
+    def write(
+        self,
+        segments: list[TranscriptSegment],
+        output_path: str,
+        speaker_name_map: dict[str, str] | None = None,
+    ) -> None:
         """Write transcript segments to an SRT file.
 
         Args:
             segments: List of TranscriptSegment objects.
             output_path: Destination file path.
+            speaker_name_map: Optional mapping from speaker_id to display
+                name.  Keys not present in the map fall back to the raw id.
         """
         if not segments:
             with open(output_path, "w", encoding="utf-8") as f:
@@ -63,7 +70,12 @@ class SrtWriter:
             )
             text = seg.text
             if self.speaker_label:
-                text = f"[{self._speaker_label(seg.speaker_id)}] {text}"
+                display_id = (
+                    speaker_name_map.get(seg.speaker_id, seg.speaker_id)
+                    if speaker_name_map
+                    else seg.speaker_id
+                )
+                text = f"[{self._speaker_label(display_id)}] {text}"
             lines.append(text)
             lines.append("")  # blank line between entries
 
