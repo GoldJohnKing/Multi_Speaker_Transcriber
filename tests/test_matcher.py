@@ -152,3 +152,67 @@ def test_matcher_empty_tracks(sample_audio_16k):
     mapping = matcher.match_tracks_to_speakers([], sample_audio_16k, diarization)
     assert mapping == {}
     matcher.cleanup()
+
+
+@pytest.mark.slow
+def test_register_speakers_from_directory(tmp_path):
+    """register_speakers loads wav files and creates reference embeddings."""
+    import soundfile as sf
+
+    sr = 16_000
+    t = np.linspace(0, 1.0, sr, dtype=np.float32)
+    wav = (0.3 * np.sin(2 * np.pi * 440 * t)).astype(np.float32)
+
+    sf.write(str(tmp_path / "张三.wav"), wav, sr)
+    sf.write(str(tmp_path / "李四.wav"), wav, sr)
+
+    matcher = SpeakerMatcher(device="cpu")
+    result = matcher.register_speakers(str(tmp_path))
+
+    assert "张三" in result
+    assert "李四" in result
+    assert result["张三"] is not None
+    assert result["李四"] is not None
+    assert isinstance(result["张三"], np.ndarray)
+    assert result["张三"].shape == (192,)
+    matcher.cleanup()
+
+
+@pytest.mark.slow
+def test_register_speakers_missing_directory():
+    """register_speakers raises FileNotFoundError for missing directory."""
+    matcher = SpeakerMatcher(device="cpu")
+    with pytest.raises(FileNotFoundError, match="Speaker reference directory"):
+        matcher.register_speakers("/nonexistent/path")
+    matcher.cleanup()
+
+
+@pytest.mark.slow
+def test_register_speakers_empty_directory(tmp_path):
+    """register_speakers raises ValueError for directory with no audio files."""
+    matcher = SpeakerMatcher(device="cpu")
+    with pytest.raises(ValueError, match="No valid audio files"):
+        matcher.register_speakers(str(tmp_path))
+    matcher.cleanup()
+
+
+def test_match_speakers_to_references_no_user_refs():
+    """Returns empty dict when no user references are registered."""
+    from transcribe.models.matcher import SpeakerMatcher
+
+    matcher = SpeakerMatcher.__new__(SpeakerMatcher)
+    matcher._user_references = None
+
+    audio = AudioSegment(
+        waveform=np.zeros(16000, dtype=np.float32),
+        sample_rate=16000,
+        start_time=0.0,
+        end_time=1.0,
+    )
+    diarization = DiarizationResult(
+        segments=[SpeakerSegment("SPEAKER_00", 0.0, 1.0)],
+        num_speakers=1,
+    )
+
+    result = matcher.match_speakers_to_references(audio, diarization)
+    assert result == {}

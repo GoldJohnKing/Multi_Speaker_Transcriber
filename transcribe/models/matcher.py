@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import numpy as np
 import torch
+from pathlib import Path
 
 from transcribe.data.types import AudioSegment, DiarizationResult
 
@@ -21,6 +22,9 @@ _MIN_REF_SECONDS = 0.5
 
 # Default cosine similarity threshold for matching
 DEFAULT_MATCH_THRESHOLD = 0.5
+
+# Supported audio extensions for reference samples
+_SUPPORTED_AUDIO_EXTS = frozenset({".wav", ".mp3", ".flac", ".ogg", ".aac", ".m4a"})
 
 
 def _cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
@@ -57,6 +61,23 @@ def _extract_embedding(
         embedding = embedding.cpu().numpy()
     # Embedding shape: [1, 1, 192] → [192]
     return embedding.squeeze()
+
+
+def _load_reference_audio(audio_path: str, sample_rate: int = 16_000) -> np.ndarray:
+    """Load an audio file and resample to target sample rate via FFmpeg.
+
+    Args:
+        audio_path: Path to audio file.
+        sample_rate: Target sample rate.
+
+    Returns:
+        1-D float32 waveform at the target sample rate.
+    """
+    from transcribe.models.audio_extractor import AudioExtractor
+
+    extractor = AudioExtractor()
+    segment = extractor.extract(audio_path, sample_rate=sample_rate)
+    return segment.waveform
 
 
 def _find_reference_segments(
@@ -109,6 +130,7 @@ class SpeakerMatcher:
         self._device = device
         self._match_threshold = match_threshold
         self._model = self._load_model(embedding_model)
+        self._user_references: dict[str, np.ndarray] | None = None
 
     def _load_model(self, model_name: str):
         """Load SpeechBrain ECAPA speaker embedding model directly.
@@ -124,6 +146,112 @@ class SpeakerMatcher:
             run_opts={"device": self._device},
         )
         return model
+
+    def register_speakers(
+        self, reference_dir: str
+    ) -> dict[str, np.ndarray]:
+        """Load speaker reference audio files and compute embeddings.
+
+        Scans the directory for audio files. The filename (without extension)
+        is used as the speaker name.
+
+        Args:
+            reference_dir: Path to directory containing speaker audio samples.
+
+        Returns:
+            {speaker_name: 192-dim embedding vector} for all successfully
+            loaded speakers.
+
+        Raises:
+            FileNotFoundError: If reference_dir does not exist.
+            ValueError: If no valid audio files are found.
+        """
+        ref_path = Path(reference_dir)
+        if not ref_path.is_dir():
+            raise FileNotFoundError(
+                f"Speaker reference directory not found: {reference_dir}"
+            )
+
+        embeddings: dict[str, np.ndarray] = {}
+        for filepath in sorted(ref_path.iterdir()):
+            if filepath.suffix.lower() not in _SUPPORTED_AUDIO_EXTS:
+                continue
+
+            speaker_name = filepath.stem
+            waveform = _load_reference_audio(str(filepath))
+            embedding = _extract_embedding(waveform, 16_000, self._model)
+            if embedding is not None:
+                embeddings[speaker_name] = embedding
+
+        if not embeddings:
+            raise ValueError(
+                f"No valid audio files found in speaker reference directory: {reference_dir}"
+            )
+
+        self._user_references = embeddings
+        return embeddings
+
+    def match_speakers_to_references(
+        self,
+        audio: AudioSegment,
+        diarization: DiarizationResult,
+    ) -> dict[str, str]:
+        """Map diarized speaker IDs to user-provided speaker names.
+
+        For each SPEAKER_XX from diarization, extracts an embedding from the
+        best reference segment and matches it against user-provided reference
+        embeddings via cosine similarity.
+
+        Args:
+            audio: Original (denoised) full audio.
+            diarization: Diarization result with speaker segments.
+
+        Returns:
+            {SPEAKER_XX: user_name} mapping. Speakers without a match above
+            threshold are omitted from the mapping.
+        """
+        if not self._user_references:
+            return {}
+
+        # Find reference segments for each diarized speaker
+        ref_segments = _find_reference_segments(diarization)
+
+        # Extract embeddings for each diarized speaker
+        speaker_embeddings: dict[str, np.ndarray] = {}
+        for speaker_id, (start_t, end_t) in ref_segments.items():
+            start_sample = int((start_t - audio.start_time) * audio.sample_rate)
+            end_sample = int((end_t - audio.start_time) * audio.sample_rate)
+            start_sample = max(0, start_sample)
+            end_sample = min(len(audio.waveform), end_sample)
+            if end_sample <= start_sample:
+                continue
+
+            chunk = audio.waveform[start_sample:end_sample]
+            embedding = _extract_embedding(chunk, audio.sample_rate, self._model)
+            if embedding is not None:
+                speaker_embeddings[speaker_id] = embedding
+
+        # Match each diarized speaker to user references
+        name_map: dict[str, str] = {}
+        used_names: set[str] = set()
+
+        # Build all scored pairs and greedily assign
+        scored: list[tuple[str, str, float]] = []
+        for speaker_id, spk_emb in speaker_embeddings.items():
+            for user_name, ref_emb in self._user_references.items():
+                sim = _cosine_similarity(spk_emb, ref_emb)
+                scored.append((speaker_id, user_name, sim))
+
+        scored.sort(key=lambda x: x[2], reverse=True)
+        for speaker_id, user_name, sim in scored:
+            if speaker_id in name_map or user_name in used_names:
+                continue
+            if sim < self._match_threshold:
+                continue
+            name_map[speaker_id] = user_name
+            used_names.add(user_name)
+
+        return name_map
 
     def match_tracks_to_speakers(
         self,
