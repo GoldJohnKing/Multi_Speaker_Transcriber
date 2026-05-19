@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import sys
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -34,6 +35,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--separate", action="store_true", help="Enable overlap speech separation"
     )
     parser.add_argument(
+        "--tse",
+        action="store_true",
+        help="Enable target speaker extraction using video face tracking (requires video input, mutually exclusive with --separate)",
+    )
+    parser.add_argument(
         "--device",
         choices=["cpu", "cuda", "auto"],
         default="auto",
@@ -53,4 +59,11 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    return build_parser().parse_args(argv)
+    args = build_parser().parse_args(argv)
+
+    # Mutual exclusion: --tse and --separate
+    if args.tse and args.separate:
+        print("错误: --tse 和 --separate 互斥，请选择其一", file=sys.stderr)
+        sys.exit(1)
+
+    return args

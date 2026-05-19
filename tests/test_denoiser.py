@@ -1,4 +1,4 @@
-"""Tests for Stage 2: Noise suppression (Denoiser)."""
+"""Tests for Stage 2: Noise suppression using ClearVoice SE (Denoiser)."""
 
 from __future__ import annotations
 
@@ -60,11 +60,10 @@ def test_denoiser_preserves_metadata(denoiser, noisy_audio):
     assert result.end_time == noisy_audio.end_time
 
 
-def test_denoiser_output_length_approximately_matches(denoiser, noisy_audio):
-    """Resampling 16→48→16 kHz may shift length slightly (within 5 %)."""
+def test_denoiser_output_length_matches(denoiser, noisy_audio):
+    """ClearVoice operates at native 16kHz — no resampling, exact length match."""
     result = denoiser.process(noisy_audio)
-    ratio = len(result.waveform) / len(noisy_audio.waveform)
-    assert 0.95 <= ratio <= 1.05
+    assert len(result.waveform) == len(noisy_audio.waveform)
 
 
 def test_denoiser_reduces_noise(denoiser, noisy_audio):

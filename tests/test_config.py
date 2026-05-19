@@ -34,7 +34,6 @@ def test_resolve_device_explicit_cuda() -> None:
 
 def test_load_config_defaults(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """With no YAML and no overrides, return a PipelineConfig with defaults."""
-    # Point default config to a non-existent path so no YAML is loaded
     monkeypatch.setattr(
         "transcribe.config._DEFAULT_CONFIG_PATH",
         tmp_path / "nonexistent.yaml",
@@ -45,6 +44,7 @@ def test_load_config_defaults(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
     assert cfg.denoise is False
     assert cfg.diarize is True
     assert cfg.separate is False
+    assert cfg.tse is False
     assert cfg.hotwords is None
     assert cfg.language == "zh"
     assert cfg.cache_dir == ".cache"
@@ -58,6 +58,7 @@ def test_load_config_from_yaml(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
         textwrap.dedent("""\
             device: cpu
             denoise: false
+            tse: false
             language: en
             cache_dir: /tmp/my_cache
             num_speakers: 3
@@ -150,3 +151,15 @@ def test_load_config_default_yaml_path(
     cfg = load_config()
     assert cfg.device == "cpu"
     assert cfg.denoise is False
+
+
+def test_load_config_tse_override(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """tse can be set via CLI override."""
+    monkeypatch.setattr(
+        "transcribe.config._DEFAULT_CONFIG_PATH",
+        tmp_path / "nonexistent.yaml",
+    )
+    cfg = load_config(cli_overrides={"tse": True})
+    assert cfg.tse is True

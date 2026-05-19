@@ -1,4 +1,4 @@
-"""Stage 4: Speech separation for overlapping regions using SepFormer."""
+"""Stage 4: Speech separation for overlapping regions using ClearVoice MossFormer2_SS_16K."""
 
 from __future__ import annotations
 
@@ -9,28 +9,32 @@ from transcribe.data.types import AudioSegment, DiarizationResult
 
 
 class Separator:
-    """Speech separation for overlapping regions using SepFormer."""
+    """Speech separation for overlapping regions using ClearVoice SS.
+
+    Operates natively at 16kHz. Uses MossFormer2_SS_16K which outputs
+    [num_spks, 1, T] shaped arrays — one track per separated speaker.
+    """
 
     def __init__(
         self,
         device: str = "cpu",
-        model_name: str = "speechbrain/sepformer-whamr16k",
+        model_name: str = "MossFormer2_SS_16K",
         max_segment_seconds: float = 10.0,
     ) -> None:
         self._device = device
         self._max_segment_seconds = max_segment_seconds
-        self._model = self._load_model(model_name)
+        self._model_name = model_name
+        self._model = self._load_model()
 
-    def _load_model(self, model_name: str):
-        """Load SepFormer model from SpeechBrain."""
-        from speechbrain.inference.separation import SepformerSeparation
+    def _load_model(self):
+        """Load ClearVoice speech separation model."""
+        from clearvoice import ClearVoice
 
-        model = SepformerSeparation.from_hparams(
-            source=model_name,
-            savedir=f"pretrained_models/{model_name.split('/')[-1]}",
-            run_opts={"device": self._device},
-        )
-        return model
+        from transcribe.models.rocm_compat import patch_clearvoice_for_rocm
+
+        patch_clearvoice_for_rocm()
+        cv = ClearVoice(task="speech_separation", model_names=[self._model_name])
+        return cv
 
     def separate_overlaps(
         self, audio: AudioSegment, diarization: DiarizationResult
@@ -74,20 +78,13 @@ class Separator:
 
             chunk = audio.waveform[start_sample:end_sample]
 
-            # Convert to tensor — SepFormer expects (batch, time)
-            wav_tensor = torch.tensor(chunk, dtype=torch.float32)
-            if wav_tensor.ndim == 1:
-                wav_tensor = wav_tensor.unsqueeze(0)  # add batch dim
+            # ClearVoice expects [1, T] input
+            input_array = chunk.reshape(1, -1).astype(np.float32)
+            output_array = self._model(input_array, False)  # [num_spks, 1, T]
 
-            # Run separation
-            est_sources = self._model.separate_batch(wav_tensor)
-
-            # est_sources shape: (batch, time, num_speakers)
-            separated = est_sources[0]  # (time, num_speakers)
-
-            for spk_idx in range(separated.shape[-1]):
-                spk_waveform = separated[:, spk_idx].cpu().numpy()
-                spk_waveform = spk_waveform.astype(np.float32)
+            # output_array shape: [num_spks, 1, T]
+            for spk_idx in range(output_array.shape[0]):
+                spk_waveform = output_array[spk_idx, 0, :].astype(np.float32)
 
                 separated_segments.append(
                     AudioSegment(

@@ -1,33 +1,11 @@
-"""Stage 2: Noise suppression using DeepFilterNet v2."""
+"""Stage 2: Noise suppression using ClearVoice MossFormerGAN_SE_16K."""
 
 from __future__ import annotations
 
-import sys
-import types
-from collections import namedtuple
-
 import numpy as np
 import torch
-import torchaudio.functional as TA_F
 
 from transcribe.data.types import AudioSegment
-
-
-# ---------------------------------------------------------------------------
-# DeepFilterNet / torchaudio compatibility shim
-# torchaudio >= 2.11 removed ``torchaudio.backend.common.AudioMetaData`` which
-# ``df.io`` imports unconditionally.  We patch it before any ``df`` import.
-# ---------------------------------------------------------------------------
-if "torchaudio.backend.common" not in sys.modules:
-    _backend = types.ModuleType("torchaudio.backend.common")
-    _backend.AudioMetaData = namedtuple(
-        "AudioMetaData",
-        ["sample_rate", "num_frames", "num_channels", "bits_per_sample", "encoding"],
-    )
-    sys.modules["torchaudio.backend.common"] = _backend
-
-# Internal model sample rate (DeepFilterNet always uses 48 kHz)
-_DF_SR = 48_000
 
 # Default SNR threshold (dB) above which audio is considered clean enough
 DEFAULT_SNR_THRESHOLD = 25.0
@@ -65,48 +43,32 @@ def estimate_snr(audio: AudioSegment, frame_duration: float = 0.03) -> float:
 
 
 class Denoiser:
-    """Noise suppression using DeepFilterNet."""
+    """Noise suppression using ClearVoice MossFormerGAN_SE_16K.
 
-    def __init__(self, device: str = "cpu", post_filter: bool = False, model: str = "DeepFilterNet2") -> None:
+    Operates natively at 16kHz — no resampling needed.
+    """
+
+    def __init__(self, device: str = "cpu", model: str = "MossFormerGAN_SE_16K") -> None:
         self._device = device
-        self._post_filter = post_filter
         self._model_name = model
-        self._model, self._df_state = self._load_model()
-
-    # ------------------------------------------------------------------
-    # Model loading
-    # ------------------------------------------------------------------
+        self._model = self._load_model()
 
     def _load_model(self):
-        """Load DeepFilterNet model (downloads ~50 MB on first call)."""
-        from df import init_df
+        """Load ClearVoice speech enhancement model."""
+        from clearvoice import ClearVoice
 
-        model, df_state, suffix = init_df(
-            default_model=self._model_name,
-            post_filter=self._post_filter,
-            log_level="WARNING",
-            log_file=None,
-        )
-        # Move model to requested device (init_df auto-detects, we override)
-        if self._device and self._device != "cpu":
-            model = model.to(self._device)
-        else:
-            model = model.to("cpu")
-        return model, df_state
+        from transcribe.models.rocm_compat import patch_clearvoice_for_rocm
 
-    # ------------------------------------------------------------------
-    # Processing
-    # ------------------------------------------------------------------
+        patch_clearvoice_for_rocm()
+        cv = ClearVoice(task="speech_enhancement", model_names=[self._model_name])
+        return cv
 
     def process(self, audio: AudioSegment) -> AudioSegment:
         """Apply noise suppression to *audio*.
 
-        The input may be at any sample rate; it will be resampled to the
-        model's internal rate (48 kHz) and back again so the caller does not
-        need to care about rate conversion.
+        Input must be at 16kHz (native ClearVoice SE sample rate).
+        No resampling is performed — the audio is passed directly.
         """
-        from df import enhance
-
         waveform = audio.waveform
 
         # Ensure 1-D float32 numpy array
@@ -116,43 +78,20 @@ class Denoiser:
             waveform = waveform[0]
         waveform = np.ascontiguousarray(waveform, dtype=np.float32)
 
-        # Resample to model rate if needed
-        needs_resample = audio.sample_rate != _DF_SR
-        if needs_resample:
-            wav_t = torch.from_numpy(waveform).unsqueeze(0)  # [1, T]
-            wav_t = TA_F.resample(wav_t, audio.sample_rate, _DF_SR)
-        else:
-            wav_t = torch.from_numpy(waveform).unsqueeze(0)  # [1, T]
-
-        # DeepFilterNet expects Tensor[C, T]
-        with torch.no_grad():
-            enhanced = enhance(self._model, self._df_state, wav_t)
-
-        # enhanced is Tensor[C, T] → squeeze to 1-D
-        enhanced = enhanced.squeeze(0).cpu()
-
-        # Resample back to original rate
-        if needs_resample:
-            enhanced = TA_F.resample(
-                enhanced.unsqueeze(0), _DF_SR, audio.sample_rate
-            ).squeeze(0)
-
-        result_np = np.ascontiguousarray(enhanced.numpy(), dtype=np.float32)
+        # ClearVoice expects [1, T] input
+        input_array = waveform.reshape(1, -1).astype(np.float32)
+        output_array = self._model(input_array, False)  # [1, T]
+        result = output_array.squeeze(0).astype(np.float32)
 
         return AudioSegment(
-            waveform=result_np,
+            waveform=result,
             sample_rate=audio.sample_rate,
             start_time=audio.start_time,
             end_time=audio.end_time,
         )
 
-    # ------------------------------------------------------------------
-    # Cleanup
-    # ------------------------------------------------------------------
-
     def cleanup(self) -> None:
         """Release model from GPU memory."""
         del self._model
-        del self._df_state
         if self._device != "cpu" and torch.cuda.is_available():
             torch.cuda.empty_cache()

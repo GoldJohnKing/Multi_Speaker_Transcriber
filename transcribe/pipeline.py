@@ -5,9 +5,6 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
-import numpy as np
-import torch
-import torchaudio.functional as TA_F
 from rich.console import Console
 
 from transcribe.config import load_config, resolve_device
@@ -27,7 +24,7 @@ from transcribe.models.srt_writer import SrtWriter
 
 console = Console()
 
-# ASR models expect 16 kHz input
+# All stages operate at 16kHz — ClearVoice and ASR both use native 16kHz
 _ASR_SAMPLE_RATE = 16_000
 
 
@@ -57,21 +54,6 @@ def _non_overlap_ranges(
     return ranges
 
 
-def _resample(audio: AudioSegment, target_sr: int) -> AudioSegment:
-    """Resample audio to target sample rate."""
-    if audio.sample_rate == target_sr:
-        return audio
-    wav_t = torch.from_numpy(audio.waveform).unsqueeze(0)  # [1, T]
-    wav_t = TA_F.resample(wav_t, audio.sample_rate, target_sr)
-    waveform = np.ascontiguousarray(wav_t.squeeze(0).numpy(), dtype=np.float32)
-    return AudioSegment(
-        waveform=waveform,
-        sample_rate=target_sr,
-        start_time=audio.start_time,
-        end_time=audio.end_time,
-    )
-
-
 def run_pipeline(
     input_path: str,
     output_path: str | None = None,
@@ -97,12 +79,12 @@ def run_pipeline(
     total_start = time.time()
 
     # Determine total stages for progress display
-    # Stages: extract, (denoise), (diarize), (separate), asr, srt
+    # Stages: extract, (denoise), (diarize), (separate|tse), asr, srt
     total_stages = (
         2  # extract + srt
         + (1 if config.denoise else 0)
         + (1 if config.diarize else 0)
-        + (1 if config.separate and config.diarize else 0)
+        + (1 if (config.separate or config.tse) and config.diarize else 0)
         + 1  # asr
     )
 
@@ -111,9 +93,9 @@ def run_pipeline(
         console.print(f"[bold]输入:[/bold] {input_path}")
         console.print()
 
-    # Stage 1: Audio extraction
-    # Use 48kHz when denoising (DeepFilterNet's native rate), 16kHz otherwise
-    extract_sr = 48_000 if config.denoise else _ASR_SAMPLE_RATE
+    # ── Stage 1: Audio extraction ───────────────────────────────────────
+    # Always extract at 16kHz — ClearVoice SE/SS/TSE and ASR all use 16kHz
+    extract_sr = _ASR_SAMPLE_RATE
     step = 1
     step_start = time.time()
     if verbose:
@@ -123,8 +105,9 @@ def run_pipeline(
     if verbose:
         console.print(f"完成 ({time.time() - step_start:.1f}s)")
 
-    # Stage 2: Noise suppression (optional, SNR-gated)
-    if config.denoise:
+    # ── Stage 2: Noise suppression (optional, SNR-gated) ───────────────
+    # TSE implies denoise — work on clean audio for best extraction
+    if config.denoise or config.tse:
         step += 1
         step_start = time.time()
         snr = estimate_snr(audio)
@@ -147,11 +130,7 @@ def run_pipeline(
             if verbose:
                 console.print(f"完成 ({time.time() - step_start:.1f}s)")
 
-    # Resample to ASR sample rate if needed
-    if audio.sample_rate != _ASR_SAMPLE_RATE:
-        audio = _resample(audio, _ASR_SAMPLE_RATE)
-
-    # Stage 3: Speaker diarization (default on, disable with --no-diarize)
+    # ── Stage 3: Speaker diarization ───────────────────────────────────
     diarization: DiarizationResult | None = None
     if config.diarize:
         step += 1
@@ -168,9 +147,49 @@ def run_pipeline(
                 f"完成 ({time.time() - step_start:.1f}s)"
             )
 
-    # Stage 4: Speech separation (optional, only with --separate + diarization)
+    # ── Stage 4: Speech separation or TSE ──────────────────────────────
     overlap_separated: dict[tuple[float, float], list[AudioSegment]] = {}
-    if config.separate and diarization and diarization.overlap_regions:
+    tse_tracks: dict[str, AudioSegment] = {}
+
+    if config.tse and diarization:
+        # TSE branch — target speaker extraction using video face tracking
+        step += 1
+        step_start = time.time()
+        if verbose:
+            console.print(
+                f"[{step}/{total_stages}] 目标说话人提取 ...",
+                end=" ",
+            )
+
+        # Validate video input for TSE
+        _AUDIO_EXTS = {".wav", ".mp3", ".flac", ".ogg", ".aac", ".m4a"}
+        ext = Path(input_path).suffix.lower()
+        if ext in _AUDIO_EXTS:
+            raise RuntimeError(
+                f"--tse 需要视频文件输入（检测到音频文件: {ext}）"
+            )
+
+        from transcribe.models.extractor import TargetSpeakerExtractor
+
+        tse_extractor = TargetSpeakerExtractor(device=device)
+        try:
+            tse_tracks = tse_extractor.extract(input_path, audio, diarization)
+        except RuntimeError as e:
+            # Face detection failure — warn and skip TSE
+            if verbose:
+                console.print(f"\n[bold yellow]警告: {e}[/bold yellow]")
+                console.print("[bold yellow]回退到无分离模式[/bold yellow]")
+            tse_tracks = {}
+        tse_extractor.cleanup()
+
+        if tse_tracks and verbose:
+            console.print(
+                f"检测到 {len(tse_tracks)} 个人脸轨迹，提取 {len(tse_tracks)} 条说话人音频 ... "
+                f"完成 ({time.time() - step_start:.1f}s)"
+            )
+
+    elif config.separate and diarization and diarization.overlap_regions:
+        # Blind separation branch — ClearVoice SS
         step += 1
         step_start = time.time()
         if verbose:
@@ -196,7 +215,7 @@ def run_pipeline(
         if verbose:
             console.print(f"完成 ({time.time() - step_start:.1f}s)")
 
-    # Stage 5: ASR
+    # ── Stage 5: ASR ───────────────────────────────────────────────────
     step += 1
     step_start = time.time()
     if verbose:
@@ -217,34 +236,128 @@ def run_pipeline(
                     text=t.text,
                 )
             )
+
+    elif tse_tracks:
+        # TSE mode: transcribe each face track separately
+        # First, match face tracks to speakers via voice embeddings
+        from transcribe.models.matcher import SpeakerMatcher
+
+        matcher = SpeakerMatcher(device=device)
+        track_list = list(tse_tracks.values())
+        track_ids = list(tse_tracks.keys())
+        face_to_speaker = matcher.match_tracks_to_speakers(
+            track_list, audio, diarization
+        )
+        matcher.cleanup()
+
+        # Build reverse mapping: speaker_id → track
+        speaker_to_track: dict[str, AudioSegment] = {}
+        for idx, face_id in enumerate(track_ids):
+            speaker_id = face_to_speaker.get(idx, "UNKNOWN")
+            speaker_to_track[speaker_id] = tse_tracks[face_id]
+
+        # Transcribe per-speaker segments using their TSE-extracted audio
+        for spk_seg in diarization.segments:
+            track = speaker_to_track.get(spk_seg.speaker_id)
+            if track is not None:
+                # Use TSE-extracted audio for this speaker
+                # Crop track to the segment time range
+                start_sample = int(
+                    (spk_seg.start_time - track.start_time) * track.sample_rate
+                )
+                end_sample = int(
+                    (spk_seg.end_time - track.start_time) * track.sample_rate
+                )
+                start_sample = max(0, start_sample)
+                end_sample = min(len(track.waveform), end_sample)
+                if end_sample - start_sample < _min_samples:
+                    continue
+
+                segment_audio = AudioSegment(
+                    waveform=track.waveform[start_sample:end_sample],
+                    sample_rate=track.sample_rate,
+                    start_time=spk_seg.start_time,
+                    end_time=spk_seg.end_time,
+                )
+            else:
+                # No TSE track for this speaker — use original audio
+                start_sample = int(
+                    (spk_seg.start_time - audio.start_time) * audio.sample_rate
+                )
+                end_sample = int(
+                    (spk_seg.end_time - audio.start_time) * audio.sample_rate
+                )
+                start_sample = max(0, start_sample)
+                end_sample = min(len(audio.waveform), end_sample)
+                if end_sample - start_sample < _min_samples:
+                    continue
+
+                segment_audio = AudioSegment(
+                    waveform=audio.waveform[start_sample:end_sample],
+                    sample_rate=audio.sample_rate,
+                    start_time=spk_seg.start_time,
+                    end_time=spk_seg.end_time,
+                )
+
+            transcripts = transcriber.transcribe(segment_audio)
+            for t in transcripts:
+                all_segments.append(
+                    TranscriptSegment(
+                        speaker_id=spk_seg.speaker_id,
+                        start_time=t.start_time,
+                        end_time=t.end_time,
+                        text=t.text,
+                    )
+                )
+
     elif overlap_separated:
         # --separate mode: overlap regions via separated tracks,
         # non-overlap portions from original audio
+        # First, match separated tracks to speakers via voice embeddings
+        from transcribe.models.matcher import SpeakerMatcher
+
+        matcher = SpeakerMatcher(device=device)
+
         for o_start, o_end in diarization.overlap_regions:
             if (o_start, o_end) not in overlap_separated:
                 continue
             separated_tracks = overlap_separated[(o_start, o_end)]
-            unique_speakers: dict[str, SpeakerSegment] = {}
-            for s in diarization.segments:
-                if s.start_time < o_end and s.end_time > o_start:
-                    if s.speaker_id not in unique_speakers:
-                        unique_speakers[s.speaker_id] = s
-            speaker_ids = list(unique_speakers.keys())
-            for idx, spk_id in enumerate(speaker_ids):
-                if idx < len(separated_tracks):
-                    track = separated_tracks[idx]
-                    if len(track.waveform) < _min_samples:
-                        continue
-                    transcripts = transcriber.transcribe(track)
-                    for t in transcripts:
-                        all_segments.append(
-                            TranscriptSegment(
-                                speaker_id=spk_id,
-                                start_time=t.start_time,
-                                end_time=t.end_time,
-                                text=t.text,
-                            )
+
+            # Match tracks to speakers for this overlap region
+            track_mapping = matcher.match_tracks_to_speakers(
+                separated_tracks, audio, diarization
+            )
+
+            for idx, track in enumerate(separated_tracks):
+                if len(track.waveform) < _min_samples:
+                    continue
+
+                # Use matched speaker ID if available, else fall back to index
+                spk_id = track_mapping.get(idx, "UNKNOWN")
+                if spk_id == "UNKNOWN":
+                    # Fallback: assign by index from diarization overlap speakers
+                    unique_speakers: dict[str, SpeakerSegment] = {}
+                    for s in diarization.segments:
+                        if s.start_time < o_end and s.end_time > o_start:
+                            if s.speaker_id not in unique_speakers:
+                                unique_speakers[s.speaker_id] = s
+                    speaker_list = list(unique_speakers.keys())
+                    if idx < len(speaker_list):
+                        spk_id = speaker_list[idx]
+
+                transcripts = transcriber.transcribe(track)
+                for t in transcripts:
+                    all_segments.append(
+                        TranscriptSegment(
+                            speaker_id=spk_id,
+                            start_time=t.start_time,
+                            end_time=t.end_time,
+                            text=t.text,
                         )
+                    )
+
+        matcher.cleanup()
+
         # Non-overlap portions from original audio
         for spk_seg in diarization.segments:
             non_overlap = _non_overlap_ranges(
@@ -316,7 +429,7 @@ def run_pipeline(
             f"识别 {len(all_segments)} 个片段 ... 完成 ({time.time() - step_start:.1f}s)"
         )
 
-    # Stage 6: SRT generation
+    # ── Stage 6: SRT generation ────────────────────────────────────────
     step += 1
     step_start = time.time()
     if verbose:

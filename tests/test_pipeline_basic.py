@@ -75,3 +75,24 @@ def test_cli_parse_basic_args():
     assert args.output == "output.srt"
     assert args.denoise is True
     assert args.verbose is True
+
+
+def test_cli_tse_flag():
+    """CLI should parse --tse flag."""
+    from transcribe.cli import parse_args
+
+    args = parse_args(["input.mp4", "--tse", "-v"])
+    assert args.tse is True
+    assert args.separate is False
+
+
+def test_cli_tse_separate_mutual_exclusion():
+    """--tse and --separate should be mutually exclusive."""
+    import subprocess
+
+    result = subprocess.run(
+        ["uv", "run", "python", "-m", "transcribe", "input.mp4", "--tse", "--separate"],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode != 0

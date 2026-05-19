@@ -14,6 +14,7 @@ def main() -> None:
             "denoise": args.denoise,
             "diarize": not args.no_diarize,
             "separate": args.separate,
+            "tse": args.tse,
             "hotwords": args.hotwords,
             "num_speakers": args.num_speakers,
             "cache_dir": args.cache_dir,

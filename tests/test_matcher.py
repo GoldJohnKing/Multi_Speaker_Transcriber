@@ -1,0 +1,154 @@
+"""Tests for Stage 4.5: Speaker matching via voice embeddings."""
+
+from __future__ import annotations
+
+import numpy as np
+import pytest
+
+from transcribe.data.types import AudioSegment, DiarizationResult, SpeakerSegment
+
+
+# ---------------------------------------------------------------------------
+# Unit tests for helper functions (no model needed)
+# ---------------------------------------------------------------------------
+
+
+def test_cosine_similarity_identical():
+    from transcribe.models.matcher import _cosine_similarity
+
+    a = np.array([1.0, 0.0, 0.0])
+    assert _cosine_similarity(a, a) == pytest.approx(1.0)
+
+
+def test_cosine_similarity_orthogonal():
+    from transcribe.models.matcher import _cosine_similarity
+
+    a = np.array([1.0, 0.0, 0.0])
+    b = np.array([0.0, 1.0, 0.0])
+    assert _cosine_similarity(a, b) == pytest.approx(0.0)
+
+
+def test_cosine_similarity_opposite():
+    from transcribe.models.matcher import _cosine_similarity
+
+    a = np.array([1.0, 0.0, 0.0])
+    b = np.array([-1.0, 0.0, 0.0])
+    assert _cosine_similarity(a, b) == pytest.approx(-1.0)
+
+
+def test_find_reference_segments_picks_longest_non_overlap():
+    from transcribe.models.matcher import _find_reference_segments
+
+    diarization = DiarizationResult(
+        segments=[
+            SpeakerSegment("SPEAKER_00", 0.0, 1.0),  # 1.0s non-overlap
+            SpeakerSegment("SPEAKER_01", 0.5, 0.8, is_overlap=True),  # 0.3s overlap
+            SpeakerSegment("SPEAKER_00", 2.0, 4.5),  # 2.5s non-overlap (longest)
+            SpeakerSegment("SPEAKER_01", 3.0, 5.0),  # 2.0s non-overlap
+        ],
+        num_speakers=2,
+        overlap_regions=[(0.5, 0.8)],
+    )
+
+    refs = _find_reference_segments(diarization)
+    assert "SPEAKER_00" in refs
+    assert "SPEAKER_01" in refs
+    # SPEAKER_00: longest non-overlap is (2.0, 4.5)
+    assert refs["SPEAKER_00"] == (2.0, 4.5)
+    # SPEAKER_01: longest non-overlap is (3.0, 5.0)
+    assert refs["SPEAKER_01"] == (3.0, 5.0)
+
+
+def test_find_reference_segments_fallback_to_overlap():
+    from transcribe.models.matcher import _find_reference_segments
+
+    diarization = DiarizationResult(
+        segments=[
+            SpeakerSegment("SPEAKER_00", 0.0, 0.2),  # too short
+            SpeakerSegment("SPEAKER_01", 0.1, 2.0, is_overlap=True),  # overlap, only segment
+        ],
+        num_speakers=2,
+        overlap_regions=[(0.1, 2.0)],
+    )
+
+    refs = _find_reference_segments(diarization)
+    # SPEAKER_01 should fallback to its only (overlap) segment
+    assert "SPEAKER_01" in refs
+    assert refs["SPEAKER_01"] == (0.1, 2.0)
+
+
+# ---------------------------------------------------------------------------
+# Integration tests (require model download)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def sample_audio_16k():
+    """1 second of synthetic audio at 16kHz."""
+    sr = 16_000
+    duration = 1.0
+    t = np.linspace(0, duration, int(sr * duration), dtype=np.float32)
+    waveform = 0.3 * np.sin(2 * np.pi * 440 * t)
+    return AudioSegment(waveform=waveform, sample_rate=sr, start_time=0.0, end_time=duration)
+
+
+@pytest.mark.slow
+def test_matcher_init():
+    from transcribe.models.matcher import SpeakerMatcher
+
+    matcher = SpeakerMatcher(device="cpu")
+    assert matcher is not None
+    matcher.cleanup()
+
+
+@pytest.mark.slow
+def test_matcher_returns_mapping(sample_audio_16k):
+    from transcribe.models.matcher import SpeakerMatcher
+
+    matcher = SpeakerMatcher(device="cpu")
+
+    # Create two synthetic tracks
+    track1 = AudioSegment(
+        waveform=sample_audio_16k.waveform.copy(),
+        sample_rate=16_000,
+        start_time=0.0,
+        end_time=1.0,
+    )
+    track2 = AudioSegment(
+        waveform=sample_audio_16k.waveform.copy(),
+        sample_rate=16_000,
+        start_time=0.0,
+        end_time=1.0,
+    )
+
+    diarization = DiarizationResult(
+        segments=[
+            SpeakerSegment("SPEAKER_00", 0.0, 1.0),
+            SpeakerSegment("SPEAKER_01", 0.0, 1.0, is_overlap=True),
+        ],
+        num_speakers=2,
+        overlap_regions=[(0.0, 1.0)],
+    )
+
+    mapping = matcher.match_tracks_to_speakers([track1, track2], sample_audio_16k, diarization)
+    assert isinstance(mapping, dict)
+    assert len(mapping) == 2
+    # Both tracks should have a speaker assignment (or UNKNOWN)
+    for idx in range(2):
+        assert idx in mapping
+    matcher.cleanup()
+
+
+@pytest.mark.slow
+def test_matcher_empty_tracks(sample_audio_16k):
+    from transcribe.models.matcher import SpeakerMatcher
+
+    matcher = SpeakerMatcher(device="cpu")
+    diarization = DiarizationResult(
+        segments=[SpeakerSegment("SPEAKER_00", 0.0, 1.0)],
+        num_speakers=1,
+        overlap_regions=[],
+    )
+    mapping = matcher.match_tracks_to_speakers([], sample_audio_16k, diarization)
+    assert mapping == {}
+    matcher.cleanup()

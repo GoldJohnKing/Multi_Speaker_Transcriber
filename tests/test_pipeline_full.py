@@ -1,4 +1,4 @@
-"""Full pipeline integration tests (all 6 stages).
+"""Full pipeline integration tests (all stages).
 
 Requires all models to be cached locally.
 Marked as slow / optional for CI.
@@ -29,8 +29,8 @@ def sample_wav(tmp_path: Path):
 
 @pytest.mark.slow
 def test_full_pipeline_with_all_stages(sample_wav, tmp_path):
-    """Test full 6-stage pipeline without denoising."""
-    from transcribe.config import PipelineConfig
+    """Test full pipeline without denoising."""
+    from transcribe.data.types import PipelineConfig
     from transcribe.pipeline import run_pipeline
 
     output = str(tmp_path / "output.srt")
@@ -46,12 +46,29 @@ def test_full_pipeline_with_all_stages(sample_wav, tmp_path):
 
 @pytest.mark.slow
 def test_full_pipeline_with_denoise(sample_wav, tmp_path):
-    """Test full 6-stage pipeline with denoising enabled."""
-    from transcribe.config import PipelineConfig
+    """Test full pipeline with ClearVoice denoising enabled."""
+    from transcribe.data.types import PipelineConfig
     from transcribe.pipeline import run_pipeline
 
     output = str(tmp_path / "output.srt")
     config = PipelineConfig(device="cpu", denoise=True)
+
+    result = run_pipeline(
+        input_path=str(sample_wav),
+        output_path=output,
+        config=config,
+    )
+    assert Path(result).exists()
+
+
+@pytest.mark.slow
+def test_full_pipeline_no_diarize(sample_wav, tmp_path):
+    """Test pipeline with no diarization (--no-diarize)."""
+    from transcribe.data.types import PipelineConfig
+    from transcribe.pipeline import run_pipeline
+
+    output = str(tmp_path / "output.srt")
+    config = PipelineConfig(device="cpu", diarize=False)
 
     result = run_pipeline(
         input_path=str(sample_wav),

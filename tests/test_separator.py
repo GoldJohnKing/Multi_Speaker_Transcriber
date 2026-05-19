@@ -1,4 +1,4 @@
-"""Tests for Stage 4: Speech separation using SepFormer."""
+"""Tests for Stage 4: Speech separation using ClearVoice SS."""
 
 import numpy as np
 import pytest
@@ -51,6 +51,13 @@ def test_separator_output_are_audio_segments(overlap_audio, diarization_with_ove
     separated = sep.separate_overlaps(overlap_audio, diarization_with_overlap)
     for seg in separated:
         assert isinstance(seg, AudioSegment)
+
+
+def test_separator_two_tracks_per_overlap(overlap_audio, diarization_with_overlap):
+    """ClearVoice SS separates into 2 speaker tracks per overlap region."""
+    sep = Separator(device="cpu")
+    separated = sep.separate_overlaps(overlap_audio, diarization_with_overlap)
+    assert len(separated) == 2  # 1 overlap region × 2 speakers
 
 
 def test_separator_no_overlap_returns_empty(overlap_audio):

@@ -11,7 +11,7 @@ from transcribe.data.types import PipelineConfig
 
 # Known PipelineConfig field names
 _PIPELINE_CONFIG_FIELDS = frozenset(
-    {"device", "denoise", "diarize", "separate", "hotwords", "language", "cache_dir", "num_speakers"}
+    {"device", "denoise", "diarize", "separate", "tse", "hotwords", "language", "cache_dir", "num_speakers"}
 )
 
 # Default config file location: project root / config.yaml

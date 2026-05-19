@@ -2,11 +2,12 @@ device: auto
 denoise: false
 diarize: true
 separate: false
+tse: false
 language: zh
 
 denoiser:
-  model: DeepFilterNet2
-  post_filter: false
+  model: MossFormerGAN_SE_16K
+  snr_threshold: 25
 
 diarizer:
   model: pyannote/speaker-diarization-3.1
@@ -14,8 +15,17 @@ diarizer:
   clustering: hidden_markov
 
 separator:
-  model: speechbrain/sepformer-whamr16k
+  model: MossFormer2_SS_16K
   max_segment_seconds: 10
+
+extractor:
+  model: AV_MossFormer2_TSE_16K
+  min_track_frames: 50
+
+matcher:
+  embedding_model: speechbrain/spkrec-ecapa-voxceleb
+  match_threshold: 0.5
+  min_segment_seconds: 0.5
 
 asr:
   model: paraformer-zh

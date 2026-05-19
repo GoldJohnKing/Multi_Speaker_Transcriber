@@ -10,7 +10,8 @@ wheels/
 .venv
 
 # Test samples (large media files)
-test_sample/
+samples/
 
 # Pretrained model caches
 pretrained_models/
+checkpoints/

@@ -18,16 +18,21 @@ asr = [
     "torchaudio>=2.1",
 ]
 denoise = [
-    "deepfilternet>=0.5",
+    "clearvoice",
 ]
 diarize = [
     "pyannote.audio>=3.1",
 ]
 separate = [
-    "speechbrain>=1.0",
+    "clearvoice",
+]
+tse = [
+    "clearvoice",
+    "torchvision",
+    "opencv-python",
 ]
 all = [
-    "multi-speaker-transcribe[asr,denoise,diarize,separate]",
+    "multi-speaker-transcribe[asr,denoise,diarize,separate,tse]",
 ]
 dev = [
     "pytest>=8.0",
