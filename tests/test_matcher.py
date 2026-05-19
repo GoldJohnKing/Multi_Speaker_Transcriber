@@ -158,6 +158,7 @@ def test_matcher_empty_tracks(sample_audio_16k):
 def test_register_speakers_from_directory(tmp_path):
     """register_speakers loads wav files and creates reference embeddings."""
     import soundfile as sf
+    from transcribe.models.matcher import SpeakerMatcher
 
     sr = 16_000
     t = np.linspace(0, 1.0, sr, dtype=np.float32)
@@ -181,6 +182,8 @@ def test_register_speakers_from_directory(tmp_path):
 @pytest.mark.slow
 def test_register_speakers_missing_directory():
     """register_speakers raises FileNotFoundError for missing directory."""
+    from transcribe.models.matcher import SpeakerMatcher
+
     matcher = SpeakerMatcher(device="cpu")
     with pytest.raises(FileNotFoundError, match="Speaker reference directory"):
         matcher.register_speakers("/nonexistent/path")
@@ -190,6 +193,8 @@ def test_register_speakers_missing_directory():
 @pytest.mark.slow
 def test_register_speakers_empty_directory(tmp_path):
     """register_speakers raises ValueError for directory with no audio files."""
+    from transcribe.models.matcher import SpeakerMatcher
+
     matcher = SpeakerMatcher(device="cpu")
     with pytest.raises(ValueError, match="No valid audio files"):
         matcher.register_speakers(str(tmp_path))
