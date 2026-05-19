@@ -144,6 +144,13 @@ uv run python -m transcribe input.mp4 \
   --hotwords hotwords/my_dict.txt \
   -o output.srt \
   -v
+
+# Run — with speaker voice references (use actual names instead of 说话人1, etc.)
+uv run python -m transcribe input.mp4 \
+  --speaker-ref ./speaker_samples/ \
+  --hotwords hotwords/my_dict.txt \
+  -o output.srt \
+  -v
 ```
 
 ## CLI Flags Summary
@@ -155,6 +162,7 @@ uv run python -m transcribe input.mp4 \
 | `--denoise` | off | Enable ClearVoice noise suppression (SNR-gated) |
 | `--separate` | off | Enable ClearVoice overlap speech separation + speaker matching |
 | `--tse` | off | Enable ClearVoice target speaker extraction (requires video, mutually exclusive with `--separate`) |
+| `--speaker-ref DIR` | none | Directory of speaker audio samples; filenames (sans extension) become speaker names in SRT output |
 | `--num-speakers N` | auto | Hint known speaker count to diarizer |
 | `--hotwords FILE` | none | Hotword file for ASR boosting |
 | `-v, --verbose` | off | Print per-stage progress and timing |
