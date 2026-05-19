@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import torch
@@ -9,6 +10,56 @@ import torch
 from funasr import AutoModel
 
 from transcribe.data.types import AudioSegment, TranscriptSegment
+
+# Chinese punctuation characters that ct-punc may insert between hotword chars
+_PUNC_PATTERN = r"[，。？！、；：""''（）【】《》…—· ]*"
+
+
+def restore_hotwords(text: str, hotword_list: list[str]) -> str:
+    """Remove punctuation that ct-punc inserted inside hotword terms.
+
+    FunASR's ct-punc model processes Chinese text character-by-character and has
+    no awareness of hotword boundaries.  It may insert commas, periods, etc. in
+    the middle of a correctly-recognised hotword (e.g. ``朽，叶`` for the
+    hotword ``朽叶``).  This function detects such breakages and restores the
+    original hotword form.
+
+    Args:
+        text: ASR output text (already punctuated by ct-punc).
+        hotword_list: List of hotword terms to protect.
+
+    Returns:
+        Text with hotword-internal punctuation removed.
+    """
+    if not text or not hotword_list:
+        return text
+
+    # Only multi-char hotwords can have internal punctuation
+    multi_char = [w for w in hotword_list if len(w) >= 2]
+    if not multi_char:
+        return text
+
+    # Build combined alternation pattern
+    parts: list[str] = []
+    for hw in multi_char:
+        chars = list(hw)
+        pattern = "".join(
+            re.escape(c) + _PUNC_PATTERN for c in chars[:-1]
+        ) + re.escape(chars[-1])
+        parts.append(pattern)
+    combined = re.compile("|".join(parts))
+
+    hotword_set = set(hotword_list)
+
+    def _replace(match: re.Match[str]) -> str:
+        matched = match.group(0)
+        # Strip all punctuation/spaces to get bare characters
+        bare = re.sub(_PUNC_PATTERN, "", matched)
+        if bare in hotword_set:
+            return bare
+        return matched
+
+    return combined.sub(_replace, text)
 
 
 class ASRTranscriber:
@@ -23,7 +74,7 @@ class ASRTranscriber:
         punc_model: str = "ct-punc",
     ) -> None:
         self._device = device
-        self._hotwords = self._load_hotwords(hotword_path)
+        self._hotwords, self._hotword_list = self._load_hotwords(hotword_path)
         self._model = AutoModel(
             model=model_name,
             vad_model=vad_model,
@@ -31,19 +82,23 @@ class ASRTranscriber:
             device=device,
         )
 
-    def _load_hotwords(self, path: str | None) -> str | None:
-        """Load hotwords from text file (one per line), space-joined."""
+    def _load_hotwords(self, path: str | None) -> tuple[str | None, list[str]]:
+        """Load hotwords from text file (one per line), space-joined.
+
+        Returns:
+            Tuple of (space-joined hotword string or None, list of individual words).
+        """
         if path is None:
-            return None
+            return None, []
         p = Path(path)
         if not p.exists():
-            return None
+            return None, []
         words = [
             line.strip()
             for line in p.read_text(encoding="utf-8").splitlines()
             if line.strip()
         ]
-        return " ".join(words) if words else None
+        return (" ".join(words) if words else None), words
 
     def transcribe(self, audio: AudioSegment) -> list[TranscriptSegment]:
         """Transcribe audio to text segments with timestamps."""
@@ -62,6 +117,9 @@ class ASRTranscriber:
             timestamps = res.get("timestamp", [])
             if not text or not timestamps:
                 continue
+
+            # Restore hotword terms broken by ct-punc punctuation insertion
+            text = restore_hotwords(text, self._hotword_list)
 
             # FunASR timestamp format: [[start_ms, end_ms], [start_ms, end_ms], ...]
             # Each pair corresponds to one recognized character/word.
