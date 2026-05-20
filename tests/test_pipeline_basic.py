@@ -41,7 +41,7 @@ def test_pipeline_produces_srt(sample_wav, tmp_path):
     from transcribe.pipeline import run_pipeline
 
     output = str(tmp_path / "output.srt")
-    config = PipelineConfig(device="cpu", denoise=False, hotwords=None)
+    config = PipelineConfig(device="cpu", hotwords=None)
 
     result = run_pipeline(
         input_path=str(sample_wav),
@@ -70,29 +70,7 @@ def test_cli_parse_basic_args():
     """CLI should parse basic arguments."""
     from transcribe.cli import parse_args
 
-    args = parse_args(["input.mp4", "-o", "output.srt", "--denoise", "-v"])
+    args = parse_args(["input.mp4", "-o", "output.srt", "-v"])
     assert args.input == "input.mp4"
     assert args.output == "output.srt"
-    assert args.denoise is True
     assert args.verbose is True
-
-
-def test_cli_tse_flag():
-    """CLI should parse --tse flag."""
-    from transcribe.cli import parse_args
-
-    args = parse_args(["input.mp4", "--tse", "-v"])
-    assert args.tse is True
-    assert args.separate is False
-
-
-def test_cli_tse_separate_mutual_exclusion():
-    """--tse and --separate should be mutually exclusive."""
-    import subprocess
-
-    result = subprocess.run(
-        ["uv", "run", "python", "-m", "transcribe", "input.mp4", "--tse", "--separate"],
-        capture_output=True,
-        text=True,
-    )
-    assert result.returncode != 0

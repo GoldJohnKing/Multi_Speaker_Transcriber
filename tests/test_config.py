@@ -41,10 +41,7 @@ def test_load_config_defaults(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
     cfg = load_config()
     assert isinstance(cfg, PipelineConfig)
     assert cfg.device == "auto"
-    assert cfg.denoise is False
     assert cfg.diarize is True
-    assert cfg.separate is False
-    assert cfg.tse is False
     assert cfg.hotwords is None
     assert cfg.language == "zh"
     assert cfg.cache_dir == ".cache"
@@ -57,8 +54,6 @@ def test_load_config_from_yaml(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
     yaml_file.write_text(
         textwrap.dedent("""\
             device: cpu
-            denoise: false
-            tse: false
             language: en
             cache_dir: /tmp/my_cache
             num_speakers: 3
@@ -71,7 +66,6 @@ def test_load_config_from_yaml(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
     )
     cfg = load_config(config_path=str(yaml_file))
     assert cfg.device == "cpu"
-    assert cfg.denoise is False
     assert cfg.language == "en"
     assert cfg.cache_dir == "/tmp/my_cache"
     assert cfg.num_speakers == 3
@@ -85,7 +79,6 @@ def test_load_config_yaml_and_cli_override(
     yaml_file.write_text(
         textwrap.dedent("""\
             device: cpu
-            denoise: false
             language: en
         """),
         encoding="utf-8",
@@ -99,7 +92,6 @@ def test_load_config_yaml_and_cli_override(
         cli_overrides={"device": "cuda", "language": "zh"},
     )
     assert cfg.device == "cuda"  # CLI wins
-    assert cfg.denoise is False  # from YAML
     assert cfg.language == "zh"  # CLI wins
 
 
@@ -140,7 +132,6 @@ def test_load_config_default_yaml_path(
     default_yaml.write_text(
         textwrap.dedent("""\
             device: cpu
-            denoise: false
         """),
         encoding="utf-8",
     )
@@ -150,16 +141,3 @@ def test_load_config_default_yaml_path(
     )
     cfg = load_config()
     assert cfg.device == "cpu"
-    assert cfg.denoise is False
-
-
-def test_load_config_tse_override(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """tse can be set via CLI override."""
-    monkeypatch.setattr(
-        "transcribe.config._DEFAULT_CONFIG_PATH",
-        tmp_path / "nonexistent.yaml",
-    )
-    cfg = load_config(cli_overrides={"tse": True})
-    assert cfg.tse is True

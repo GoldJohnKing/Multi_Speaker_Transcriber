@@ -111,10 +111,13 @@ def _patch_torch_load_for_pyannote() -> None:
 
 def _patch_huggingface_hub_for_pyannote() -> None:
     """Monkey-patch huggingface_hub so that ``use_auth_token`` is remapped
-    to ``token`` when passed to ``hf_hub_download``.
+    to ``token`` when passed to ``hf_hub_download``, and inject ``HF_TOKEN``
+    when no token is provided at all.
 
-    pyannote.audio 3.x passes ``use_auth_token`` to ``hf_hub_download``,
-    but huggingface_hub >= 0.26 removed that keyword in favour of ``token``.
+    pyannote.audio 4.x may not propagate the ``token`` kwarg to every
+    internal ``from_pretrained`` call (e.g. ``PLDA.from_pretrained(**plda)``
+    in ``get_plda`` drops the token).  This patch ensures the token is
+    always present for gated repo downloads.
     """
     import huggingface_hub
 
@@ -124,10 +127,18 @@ def _patch_huggingface_hub_for_pyannote() -> None:
     _orig = huggingface_hub.hf_hub_download
 
     def _wrapped(*args: object, **kwargs: object) -> object:
+        # Remap legacy use_auth_token → token
         if "use_auth_token" in kwargs and "token" not in kwargs:
             kwargs["token"] = kwargs.pop("use_auth_token")
         else:
             kwargs.pop("use_auth_token", None)
+
+        # Inject HF_TOKEN from environment when no token is provided
+        if "token" not in kwargs or kwargs["token"] is None:
+            env_token = os.environ.get("HF_TOKEN")
+            if env_token:
+                kwargs["token"] = env_token
+
         return _orig(*args, **kwargs)
 
     huggingface_hub.hf_hub_download = _wrapped
@@ -152,9 +163,10 @@ class Diarizer:
         _patch_torchaudio_for_pyannote()
         _patch_huggingface_hub_for_pyannote()
         _patch_torch_load_for_pyannote()
-        from pyannote.audio import Pipeline
 
         token = hf_token or os.environ.get("HF_TOKEN")
+
+        from pyannote.audio import Pipeline
         pipeline = Pipeline.from_pretrained(
             model_name,
             use_auth_token=token,

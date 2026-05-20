@@ -17,22 +17,12 @@ asr = [
     "torch>=2.1",
     "torchaudio>=2.1",
 ]
-denoise = [
-    "clearvoice",
-]
 diarize = [
-    "pyannote.audio>=3.1",
-]
-separate = [
-    "clearvoice",
-]
-tse = [
-    "clearvoice",
-    "torchvision",
-    "opencv-python",
+    "pyannote.audio>=3.1,<4",
+    "speechbrain>=1.0",
 ]
 all = [
-    "multi-speaker-transcribe[asr,denoise,diarize,separate,tse]",
+    "multi-speaker-transcribe[asr,diarize]",
 ]
 dev = [
     "pytest>=8.0",

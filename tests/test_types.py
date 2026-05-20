@@ -147,9 +147,7 @@ class TestPipelineConfig:
     def test_defaults(self) -> None:
         cfg = PipelineConfig()
         assert cfg.device == "auto"
-        assert cfg.denoise is False
         assert cfg.diarize is True
-        assert cfg.separate is False
         assert cfg.hotwords is None
         assert cfg.language == "zh"
         assert cfg.cache_dir == ".cache"
@@ -158,18 +156,14 @@ class TestPipelineConfig:
     def test_custom_values(self) -> None:
         cfg = PipelineConfig(
             device="cuda",
-            denoise=True,
             diarize=False,
-            separate=True,
             hotwords="hotwords/dict.txt",
             language="en",
             cache_dir="/tmp/cache",
             num_speakers=3,
         )
         assert cfg.device == "cuda"
-        assert cfg.denoise is True
         assert cfg.diarize is False
-        assert cfg.separate is True
         assert cfg.hotwords == "hotwords/dict.txt"
         assert cfg.language == "en"
         assert cfg.cache_dir == "/tmp/cache"

@@ -27,14 +27,9 @@ uv run pytest                # 运行测试
 |------|----------|------|
 | 核心 | `uv sync` | numpy, pyyaml, rich, soundfile（始终安装） |
 | `asr` | `uv sync --extra asr` | FunASR, torch, torchaudio, modelscope |
-| `denoise` | `uv sync --extra denoise` | ClearVoice |
-| `diarize` | `uv sync --extra diarize` | pyannote.audio |
-| `separate` | `uv sync --extra separate` | ClearVoice |
-| `tse` | `uv sync --extra tse` | ClearVoice, torchvision, opencv-python |
+| `diarize` | `uv sync --extra diarize` | pyannote.audio, speechbrain |
 | `all` | `uv sync --extra all` | 以上全部 |
 | `dev` | `uv sync --extra dev` | pytest（通常与 `--extra all` 组合） |
-
-注意 `denoise`、`separate`、`tse` 都依赖 ClearVoice，存在重叠。
 
 ### PyTorch 安装
 
@@ -78,7 +73,7 @@ transcribe/
 
 - 每个模型类实现 `process()` / `extract()` / `transcribe()` 等方法，以及 `cleanup()` 用于释放 GPU 显存
 - 新增管线阶段时，同步更新 `pipeline.py`、`cli.py`（如有新参数）、`data/types.py`（如有新数据类型）、`config.yaml`（如有新配置项）
-- `config.yaml` 中的顶层字段由 `config.py` 加载，子配置段（`denoiser:`、`diarizer:` 等）目前仅为参考，实际参数硬编码在模型类构造函数中
+- `config.yaml` 中的顶层字段由 `config.py` 加载，子配置段（`diarizer:`、`matcher:` 等）目前仅为参考，实际参数硬编码在模型类构造函数中
 
 ## 运行时配置
 
@@ -91,4 +86,3 @@ transcribe/
 - 所有音频处理统一使用 **16kHz 单声道**，不要在模型中添加重采样逻辑
 - 各阶段模型通过 `cleanup()` 释放显存，避免同时加载所有模型导致 OOM
 - `samples/`、`pretrained_models/`、`checkpoints/` 目录已在 `.gitignore` 中，不要提交大文件
-- ClearVoice 存在 AMD ROCm 兼容性问题，由 `rocm_compat.py` 统一修补

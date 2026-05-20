@@ -34,24 +34,7 @@ def test_full_pipeline_with_all_stages(sample_wav, tmp_path):
     from transcribe.pipeline import run_pipeline
 
     output = str(tmp_path / "output.srt")
-    config = PipelineConfig(device="cpu", denoise=False)
-
-    result = run_pipeline(
-        input_path=str(sample_wav),
-        output_path=output,
-        config=config,
-    )
-    assert Path(result).exists()
-
-
-@pytest.mark.slow
-def test_full_pipeline_with_denoise(sample_wav, tmp_path):
-    """Test full pipeline with ClearVoice denoising enabled."""
-    from transcribe.data.types import PipelineConfig
-    from transcribe.pipeline import run_pipeline
-
-    output = str(tmp_path / "output.srt")
-    config = PipelineConfig(device="cpu", denoise=True)
+    config = PipelineConfig(device="cpu")
 
     result = run_pipeline(
         input_path=str(sample_wav),
