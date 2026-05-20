@@ -12,7 +12,7 @@ dependencies = [
 
 [project.optional-dependencies]
 asr = [
-    "funasr>=1.1",
+    "funasr @ git+https://github.com/modelscope/FunASR.git",
     "modelscope",
     "torch>=2.1",
     "torchaudio>=2.1",

@@ -14,10 +14,11 @@ matcher:
   min_segment_seconds: 0.5
 
 asr:
-  model: paraformer-zh
+  model: iic/Fun-ASR-Nano-2512
   vad_model: fsmn-vad
-  punc_model: ct-punc
-  batch_size_s: 300
+  vad_max_single_segment_time: 30000
+  # No punc_model — Fun-ASR-Nano generates punctuation via LLM
+  # bf16 is auto-enabled for GPU in ASRTranscriber
 
 srt:
   max_chars_per_line: 20
