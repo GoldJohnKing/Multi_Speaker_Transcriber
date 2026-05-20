@@ -27,7 +27,7 @@ uv run pytest                # 运行测试
 |------|----------|------|
 | 核心 | `uv sync` | numpy, pyyaml, rich, soundfile（始终安装） |
 | `asr` | `uv sync --extra asr` | FunASR, torch, torchaudio, modelscope |
-| `diarize` | `uv sync --extra diarize` | pyannote.audio, scipy, speechbrain |
+| `diarize` | `uv sync --extra diarize` | pyannote.audio, scipy, modelscope |
 | `all` | `uv sync --extra all` | 以上全部 |
 | `dev` | `uv sync --extra dev` | pytest（通常与 `--extra all` 组合） |
 

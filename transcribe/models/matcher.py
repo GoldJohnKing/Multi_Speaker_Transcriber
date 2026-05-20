@@ -1,12 +1,13 @@
 """Stage 4.5: Speaker matching via voice embedding cosine similarity.
 
 Resolves the core problem: separated audio tracks are anonymous — we don't
-know which track corresponds to which speaker. This module uses SpeechBrain's
-ECAPA-TDNN speaker embedding model to extract 192-dim voice embeddings and
-match tracks to speaker labels via cosine similarity.
+know which track corresponds to which speaker. This module uses the
+ERes2NetV2 speaker embedding model (from 3D-Speaker / ModelScope) to extract
+192-dim voice embeddings and match tracks to speakers via cosine similarity.
 
-Uses SpeechBrain directly (bypasses Pyannote's PretrainedSpeakerEmbedding
-wrapper to avoid use_auth_token compatibility issues with SpeechBrain 1.x).
+The ERes2NetV2 model (`iic/speech_eres2netv2_sv_zh-cn_16k-common`) is
+optimized for Chinese speakers, achieving 6.14% EER on CN-Celeb — a
+significant improvement over the previous SpeechBrain ECAPA-TDNN baseline.
 
 Matching uses the Hungarian algorithm (scipy.optimize.linear_sum_assignment)
 for globally optimal 1:1 assignment instead of greedy matching. Embeddings
@@ -80,7 +81,7 @@ def _extract_embedding(
     Args:
         waveform: 1-D float32 numpy array.
         sample_rate: Audio sample rate.
-        model: SpeechBrain EncoderClassifier model.
+        model: ERes2NetV2 model from modelscope.
 
     Returns:
         192-dim embedding vector, or None if segment is too short.
@@ -88,17 +89,11 @@ def _extract_embedding(
     if len(waveform) < int(sample_rate * _MIN_REF_SECONDS):
         return None
 
-    # SpeechBrain expects (batch, time) tensor
-    wav_tensor = torch.tensor(waveform, dtype=torch.float32)
-    if wav_tensor.ndim == 1:
-        wav_tensor = wav_tensor.unsqueeze(0)  # [1, T]
-
     with torch.no_grad():
-        embedding = model.encode_batch(wav_tensor)
+        embedding = model(waveform)
     if isinstance(embedding, torch.Tensor):
         embedding = embedding.cpu().numpy()
-    # Embedding shape: [1, 1, 192] → [192]
-    return embedding.squeeze()
+    return embedding.flatten()
 
 
 def _load_reference_audio(
@@ -234,14 +229,18 @@ def _extract_speaker_embeddings(
 class SpeakerMatcher:
     """Match separated audio tracks to speaker labels via voice embeddings.
 
-    Uses SpeechBrain's ECAPA-TDNN speaker embedding model directly to extract
-    192-dim voice embeddings and cosine similarity to match tracks to speakers.
+    Uses the ERes2NetV2 speaker embedding model (3D-Speaker / ModelScope)
+    optimized for Chinese speakers to extract 192-dim voice embeddings and
+    cosine similarity to match tracks to speakers.
     """
+
+    # Default model: ERes2NetV2 trained on 200K Chinese speakers (CN-Celeb EER 6.14%)
+    _DEFAULT_MODEL = "iic/speech_eres2netv2_sv_zh-cn_16k-common"
 
     def __init__(
         self,
         device: str = "cpu",
-        embedding_model: str = "speechbrain/spkrec-ecapa-voxceleb",
+        embedding_model: str = _DEFAULT_MODEL,
         match_threshold: float = DEFAULT_MATCH_THRESHOLD,
     ) -> None:
         self._device = device
@@ -250,18 +249,15 @@ class SpeakerMatcher:
         self._user_references: dict[str, np.ndarray] | None = None
 
     def _load_model(self, model_name: str):
-        """Load SpeechBrain ECAPA speaker embedding model directly.
+        """Load ERes2NetV2 speaker embedding model via ModelScope.
 
-        Bypasses Pyannote's PretrainedSpeakerEmbedding wrapper which has
-        use_auth_token incompatibility with SpeechBrain 1.x.
+        The model handles FBank feature extraction internally, accepting
+        raw numpy float32 waveforms at 16kHz.
         """
-        from speechbrain.inference.speaker import EncoderClassifier
+        from modelscope.models import Model
 
-        model = EncoderClassifier.from_hparams(
-            source=model_name,
-            savedir=f"pretrained_models/{model_name.split('/')[-1]}",
-            run_opts={"device": self._device},
-        )
+        model = Model.from_pretrained(model_name, device=self._device)
+        model.eval()
         return model
 
     def register_speakers(
@@ -421,5 +417,7 @@ class SpeakerMatcher:
     def cleanup(self) -> None:
         """Release model from memory."""
         del self._model
+        self._model = None
+        self._user_references = None
         if self._device != "cpu" and torch.cuda.is_available():
             torch.cuda.empty_cache()

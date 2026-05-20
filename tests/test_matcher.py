@@ -351,8 +351,9 @@ def test_extract_speaker_embeddings_with_mock():
         num_speakers=1,
     )
 
+    # ERes2NetV2 model API: model(waveform) → torch.Tensor of shape (192,)
     mock_model = MagicMock()
-    mock_model.encode_batch.return_value = torch.randn(1, 1, 192)
+    mock_model.return_value = torch.randn(192)
 
     embeddings = _extract_speaker_embeddings(audio, diarization, mock_model)
     assert "SPEAKER_00" in embeddings

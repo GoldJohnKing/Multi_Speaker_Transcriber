@@ -61,7 +61,7 @@ uv pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
 | 依赖组 | 命令 | 包含功能 |
 |--------|------|----------|
 | `asr` | `uv sync --extra asr` | 语音识别（FunASR + PyTorch） |
-| `diarize` | `uv sync --extra diarize` | 说话人识别 + 声纹匹配（Pyannote + SpeechBrain + scipy） |
+| `diarize` | `uv sync --extra diarize` | 说话人识别 + 声纹匹配（Pyannote + ModelScope + scipy） |
 | `all` | `uv sync --extra all` | 全部功能 |
 
 ### Pyannote 说话人识别（HF Token）
@@ -174,7 +174,7 @@ usage: transcribe [-h] [-o OUTPUT] [--hotwords FILE] [--num-speakers N]
                 │
                 ▼
 ┌─────────────────────────────────┐
-│  Stage 2.5: 说话人参考匹配     │  SpeechBrain ECAPA-TDNN
+│  Stage 2.5: 说话人参考匹配     │  ERes2NetV2 (3D-Speaker)
 │  (--speaker-ref DIR)            │  多段加权嵌入 + 匈牙利算法匹配
 │  将 SPEAKER_XX 映射为实际姓名   │  需要 Stage 2 已启用
 └───────────────┬─────────────────┘
@@ -214,7 +214,7 @@ AudioSegment ──→ DiarizationResult ──→ (--speaker-ref)
 使用 Pyannote Audio 4.0 Community-1 模型进行说话人分割（CC-BY-4.0 许可）。输出每个说话人的时间片段（`SpeakerSegment`）及重叠区域列表（`overlap_regions`）。支持 `--num-speakers` 提示已知说话人数量以提高准确性。
 
 #### Stage 2.5 — 说话人参考匹配（可选，`--speaker-ref DIR`）
-当提供说话人参考音频目录时，使用 SpeechBrain ECAPA-TDNN 提取 192 维声纹嵌入。对每个说话人，从最长 3 个非重叠片段中提取嵌入并计算时长加权平均值，然后通过匈牙利算法（`scipy.optimize.linear_sum_assignment`）进行全局最优 1:1 匹配，将匿名说话人标签（`SPEAKER_00` 等）关联到参考音频文件名（即说话人姓名）。例如目录下放置 `张三.wav`、`李四.wav`，输出中将显示 `[张三]`、`[李四]` 而非 `[说话人1]`、`[说话人2]`。此阶段需要说话人识别（Stage 2）已启用。
+当提供说话人参考音频目录时，使用 ERes2NetV2（3D-Speaker）提取 192 维声纹嵌入。对每个说话人，从最长 3 个非重叠片段中提取嵌入并计算时长加权平均值，然后通过匈牙利算法（`scipy.optimize.linear_sum_assignment`）进行全局最优 1:1 匹配，将匿名说话人标签（`SPEAKER_00` 等）关联到参考音频文件名（即说话人姓名）。例如目录下放置 `张三.wav`、`李四.wav`，输出中将显示 `[张三]`、`[李四]` 而非 `[说话人1]`、`[说话人2]`。此阶段需要说话人识别（Stage 2）已启用。
 
 #### Stage 3 — 语音识别
 使用 FunASR SeACo-Paraformer 中文语音识别模型，配合 FSMN-VAD 语音活动检测和 ct-punc 标点恢复。支持热词文件增强领域词汇识别率，并内置热词标点修复逻辑——ct-punc 可能会在热词内部插入标点（如"朽，叶"→"朽叶"），此模块自动修复。
@@ -242,7 +242,7 @@ diarizer:
   clustering: hidden_markov
 
 matcher:
-  embedding_model: speechbrain/spkrec-ecapa-voxceleb
+  embedding_model: iic/speech_eres2netv2_sv_zh-cn_16k-common
   match_threshold: 0.5    # 余弦相似度匹配阈值
   min_segment_seconds: 0.5
 
@@ -330,7 +330,7 @@ uv run python -m transcribe input.mp4 --speaker-ref speakers/ -o output.srt -v
 
 ### 工作原理
 
-- 使用 SpeechBrain ECAPA-TDNN 为每段参考音频提取 192 维声纹嵌入
+- 使用 ERes2NetV2（3D-Speaker / ModelScope）为每段参考音频提取 192 维声纹嵌入。该模型在 20 万中文说话人数据上训练，CN-Celeb EER 达 6.14%
 - 对说话人识别产生的每个说话人，从最长 3 个非重叠片段中提取嵌入并计算时长加权平均
 - 通过匈牙利算法进行全局最优 1:1 匹配，余弦相似度低于阈值（默认 0.5）的配对将被拒绝
 - 需要说话人识别（Stage 2）已启用；若使用 `--no-diarize`，参考匹配将跳过并发出警告
@@ -346,7 +346,7 @@ uv run python -m transcribe input.mp4 --speaker-ref speakers/ -o output.srt -v
 | [PyTorch](https://pytorch.org/) | 深度学习框架 | BSD-3-Clause |
 | [FunASR](https://github.com/modelscope/FunASR) | 中文语音识别（SeACo-Paraformer + VAD + 标点） | MIT |
 | [Pyannote Audio](https://github.com/pyannote/pyannote-audio) | 说话人识别（Speaker Diarization 4.0 Community-1） | MIT |
-| [SpeechBrain](https://github.com/speechbrain/speechbrain) | 声纹嵌入提取（ECAPA-TDNN） | Apache-2.0 |
+| [3D-Speaker](https://github.com/modelscope/3D-Speaker) | 声纹嵌入提取（ERes2NetV2 中文模型） | Apache-2.0 |
 | [FFmpeg](https://ffmpeg.org/) | 音视频格式转换 | LGPL / GPL |
 | [NumPy](https://numpy.org/) | 数值计算 | BSD-3-Clause |
 | [Rich](https://github.com/Textualize/rich) | 终端彩色输出 | MIT |
@@ -405,7 +405,7 @@ uv run pytest tests/test_srt_writer.py -v
 | 阶段 | 模型 | 预估显存 |
 |------|------|----------|
 | 说话人识别 | Pyannote 4.0 | ~2-3 GB |
-| 声纹匹配 | ECAPA-TDNN | ~0.5 GB |
+| 声纹匹配 | ERes2NetV2 | ~0.5 GB |
 | ASR | SeACo-Paraformer | ~1-2 GB |
 
 管线在各阶段之间释放模型显存（`cleanup()`），避免同时加载所有模型。

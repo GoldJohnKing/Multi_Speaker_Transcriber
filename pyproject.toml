@@ -18,9 +18,9 @@ asr = [
     "torchaudio>=2.1",
 ]
 diarize = [
+    "modelscope",
     "pyannote.audio>=4.0",
     "scipy",
-    "speechbrain>=1.0",
 ]
 all = [
     "multi-speaker-transcribe[asr,diarize]",
