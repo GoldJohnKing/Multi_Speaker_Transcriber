@@ -27,7 +27,7 @@ uv run pytest                # 运行测试
 |------|----------|------|
 | 核心 | `uv sync` | numpy, pyyaml, rich, soundfile（始终安装） |
 | `asr` | `uv sync --extra asr` | FunASR, torch, torchaudio, modelscope |
-| `diarize` | `uv sync --extra diarize` | pyannote.audio, speechbrain |
+| `diarize` | `uv sync --extra diarize` | pyannote.audio, scipy, speechbrain |
 | `all` | `uv sync --extra all` | 以上全部 |
 | `dev` | `uv sync --extra dev` | pytest（通常与 `--extra all` 组合） |
 
@@ -79,7 +79,7 @@ transcribe/
 
 - 配置优先级：**CLI 参数 > YAML 配置文件 > 代码默认值**
 - 默认配置文件：项目根目录 `config.yaml`
-- 说话人识别（Pyannote）需要 HuggingFace Token，通过 `HF_TOKEN` 环境变量或 `config.yaml` 的 `diarizer.hf_token` 配置
+- 说话人识别（Pyannote 4.0 Community-1）需要 HuggingFace Token，通过 `HF_TOKEN` 环境变量或 `config.yaml` 的 `diarizer.hf_token` 配置
 
 ## 注意事项
 

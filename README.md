@@ -61,17 +61,16 @@ uv pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
 | 依赖组 | 命令 | 包含功能 |
 |--------|------|----------|
 | `asr` | `uv sync --extra asr` | 语音识别（FunASR + PyTorch） |
-| `diarize` | `uv sync --extra diarize` | 说话人识别 + 声纹匹配（Pyannote + SpeechBrain） |
+| `diarize` | `uv sync --extra diarize` | 说话人识别 + 声纹匹配（Pyannote + SpeechBrain + scipy） |
 | `all` | `uv sync --extra all` | 全部功能 |
 
 ### Pyannote 说话人识别（HF Token）
 
-说话人识别使用 Pyannote Audio 3.1，需要 HuggingFace 访问令牌：
+说话人识别使用 Pyannote Audio 4.0 Community-1 模型，需要 HuggingFace 访问令牌：
 
-1. 在 [huggingface.co/pyannote/speaker-diarization-3.1](https://huggingface.co/pyannote/speaker-diarization-3.1) 接受用户协议
-2. 在 [huggingface.co/pyannote/segmentation-3.0](https://huggingface.co/pyannote/segmentation-3.0) 接受用户协议
-3. 生成 HF Access Token：Settings → Access Tokens → New token
-4. 配置方式（二选一）：
+1. 在 [huggingface.co/pyannote/speaker-diarization-community-1](https://huggingface.co/pyannote/speaker-diarization-community-1) 接受用户协议
+2. 生成 HF Access Token：Settings → Access Tokens → New token
+3. 配置方式（二选一）：
 
 ```bash
 # 方式一：环境变量
@@ -169,14 +168,14 @@ usage: transcribe [-h] [-o OUTPUT] [--hotwords FILE] [--num-speakers N]
                 │
                 ▼
 ┌─────────────────────────────────┐
-│  Stage 2: 说话人识别            │  Pyannote 3.1
+│  Stage 2: 说话人识别            │  Pyannote 4.0 Community-1
 │  (默认启用, --no-diarize 关闭)  │  输出: 说话人片段 + 重叠区域
 └───────────────┬─────────────────┘
                 │
                 ▼
 ┌─────────────────────────────────┐
 │  Stage 2.5: 说话人参考匹配     │  SpeechBrain ECAPA-TDNN
-│  (--speaker-ref DIR)            │  参考音频 → 声纹嵌入 → 姓名标注
+│  (--speaker-ref DIR)            │  多段加权嵌入 + 匈牙利算法匹配
 │  将 SPEAKER_XX 映射为实际姓名   │  需要 Stage 2 已启用
 └───────────────┬─────────────────┘
                 │
@@ -212,10 +211,10 @@ AudioSegment ──→ DiarizationResult ──→ (--speaker-ref)
 使用 FFmpeg 将任意格式的视频/音频转为 16kHz 单声道 float32 WAV。支持 MP4、MKV、AVI、MP3、WAV 等常见格式。
 
 #### Stage 2 — 说话人识别
-使用 Pyannote Audio 3.1 进行说话人分割。输出每个说话人的时间片段（`SpeakerSegment`）及重叠区域列表（`overlap_regions`）。支持 `--num-speakers` 提示已知说话人数量以提高准确性。
+使用 Pyannote Audio 4.0 Community-1 模型进行说话人分割（CC-BY-4.0 许可）。输出每个说话人的时间片段（`SpeakerSegment`）及重叠区域列表（`overlap_regions`）。支持 `--num-speakers` 提示已知说话人数量以提高准确性。
 
 #### Stage 2.5 — 说话人参考匹配（可选，`--speaker-ref DIR`）
-当提供说话人参考音频目录时，使用 SpeechBrain ECAPA-TDNN 提取 192 维声纹嵌入，通过余弦相似度将匿名说话人标签（`SPEAKER_00` 等）关联到参考音频文件名（即说话人姓名）。例如目录下放置 `张三.wav`、`李四.wav`，输出中将显示 `[张三]`、`[李四]` 而非 `[说话人1]`、`[说话人2]`。此阶段需要说话人识别（Stage 2）已启用。
+当提供说话人参考音频目录时，使用 SpeechBrain ECAPA-TDNN 提取 192 维声纹嵌入。对每个说话人，从最长 3 个非重叠片段中提取嵌入并计算时长加权平均值，然后通过匈牙利算法（`scipy.optimize.linear_sum_assignment`）进行全局最优 1:1 匹配，将匿名说话人标签（`SPEAKER_00` 等）关联到参考音频文件名（即说话人姓名）。例如目录下放置 `张三.wav`、`李四.wav`，输出中将显示 `[张三]`、`[李四]` 而非 `[说话人1]`、`[说话人2]`。此阶段需要说话人识别（Stage 2）已启用。
 
 #### Stage 3 — 语音识别
 使用 FunASR SeACo-Paraformer 中文语音识别模型，配合 FSMN-VAD 语音活动检测和 ct-punc 标点恢复。支持热词文件增强领域词汇识别率，并内置热词标点修复逻辑——ct-punc 可能会在热词内部插入标点（如"朽，叶"→"朽叶"），此模块自动修复。
@@ -238,7 +237,7 @@ language: zh              # 语言（当前仅支持中文）
 speaker_references: null  # 说话人参考音频目录路径
 
 diarizer:
-  model: pyannote/speaker-diarization-3.1
+  model: pyannote/speaker-diarization-community-1
   hf_token: null          # HuggingFace token（或使用 HF_TOKEN 环境变量）
   clustering: hidden_markov
 
@@ -332,8 +331,8 @@ uv run python -m transcribe input.mp4 --speaker-ref speakers/ -o output.srt -v
 ### 工作原理
 
 - 使用 SpeechBrain ECAPA-TDNN 为每段参考音频提取 192 维声纹嵌入
-- 对说话人识别产生的每个说话人片段，提取嵌入并通过余弦相似度匹配
-- 相似度最高的参考音频名作为说话人标签
+- 对说话人识别产生的每个说话人，从最长 3 个非重叠片段中提取嵌入并计算时长加权平均
+- 通过匈牙利算法进行全局最优 1:1 匹配，余弦相似度低于阈值（默认 0.5）的配对将被拒绝
 - 需要说话人识别（Stage 2）已启用；若使用 `--no-diarize`，参考匹配将跳过并发出警告
 
 ---
@@ -346,13 +345,14 @@ uv run python -m transcribe input.mp4 --speaker-ref speakers/ -o output.srt -v
 |------|------|--------|
 | [PyTorch](https://pytorch.org/) | 深度学习框架 | BSD-3-Clause |
 | [FunASR](https://github.com/modelscope/FunASR) | 中文语音识别（SeACo-Paraformer + VAD + 标点） | MIT |
-| [Pyannote Audio](https://github.com/pyannote/pyannote-audio) | 说话人识别（Speaker Diarization 3.1） | MIT |
+| [Pyannote Audio](https://github.com/pyannote/pyannote-audio) | 说话人识别（Speaker Diarization 4.0 Community-1） | MIT |
 | [SpeechBrain](https://github.com/speechbrain/speechbrain) | 声纹嵌入提取（ECAPA-TDNN） | Apache-2.0 |
 | [FFmpeg](https://ffmpeg.org/) | 音视频格式转换 | LGPL / GPL |
 | [NumPy](https://numpy.org/) | 数值计算 | BSD-3-Clause |
 | [Rich](https://github.com/Textualize/rich) | 终端彩色输出 | MIT |
 | [PyYAML](https://github.com/yaml/pyyaml) | YAML 配置文件解析 | MIT |
 | [SoundFile](https://github.com/bastibe/python-soundfile) | WAV 音频读写 | BSD-3-Clause |
+| [SciPy](https://scipy.org/) | 匈牙利算法最优匹配 | BSD-3-Clause |
 | [ModelScope](https://github.com/modelscope/modelscope) | 模型下载与管理 | Apache-2.0 |
 
 ---
@@ -404,7 +404,7 @@ uv run pytest tests/test_srt_writer.py -v
 
 | 阶段 | 模型 | 预估显存 |
 |------|------|----------|
-| 说话人识别 | Pyannote 3.1 | ~2-3 GB |
+| 说话人识别 | Pyannote 4.0 | ~2-3 GB |
 | 声纹匹配 | ECAPA-TDNN | ~0.5 GB |
 | ASR | SeACo-Paraformer | ~1-2 GB |
 
