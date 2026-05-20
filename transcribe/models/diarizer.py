@@ -1,4 +1,4 @@
-"""Stage 3: Speaker diarization using Pyannote Audio 3.1."""
+"""Stage 3: Speaker diarization using Pyannote Audio."""
 
 from __future__ import annotations
 
@@ -151,7 +151,7 @@ class Diarizer:
     def __init__(
         self,
         device: str = "cpu",
-        model_name: str = "pyannote/speaker-diarization-3.1",
+        model_name: str = "pyannote/speaker-diarization-community-1",
         hf_token: str | None = None,
         num_speakers: int | None = None,
     ) -> None:
@@ -169,7 +169,7 @@ class Diarizer:
         from pyannote.audio import Pipeline
         pipeline = Pipeline.from_pretrained(
             model_name,
-            use_auth_token=token,
+            token=token,
         )
         if self._device != "cpu" and torch.cuda.is_available():
             pipeline = pipeline.to(torch.device(self._device))
@@ -190,13 +190,20 @@ class Diarizer:
         if self._num_speakers is not None:
             kwargs["num_speakers"] = self._num_speakers
 
-        diarization = self._pipeline(input_dict, **kwargs)
+        diarization_output = self._pipeline(input_dict, **kwargs)
+
+        # pyannote 4.0 returns a DiarizeOutput with .speaker_diarization
+        # pyannote 3.x returns an Annotation directly
+        if hasattr(diarization_output, "speaker_diarization"):
+            annotation = diarization_output.speaker_diarization
+        else:
+            annotation = diarization_output
 
         segments: list[SpeakerSegment] = []
         overlap_regions: list[tuple[float, float]] = []
         speaker_set: set[str] = set()
 
-        for turn, _, speaker in diarization.itertracks(yield_label=True):
+        for turn, _, speaker in annotation.itertracks(yield_label=True):
             speaker_set.add(speaker)
             is_overlap = False
 

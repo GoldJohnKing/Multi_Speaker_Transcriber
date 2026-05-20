@@ -54,9 +54,9 @@ def test_find_reference_segments_picks_longest_non_overlap():
     assert "SPEAKER_00" in refs
     assert "SPEAKER_01" in refs
     # SPEAKER_00: longest non-overlap is (2.0, 4.5)
-    assert refs["SPEAKER_00"] == (2.0, 4.5)
+    assert refs["SPEAKER_00"][0] == (2.0, 4.5)
     # SPEAKER_01: longest non-overlap is (3.0, 5.0)
-    assert refs["SPEAKER_01"] == (3.0, 5.0)
+    assert refs["SPEAKER_01"][0] == (3.0, 5.0)
 
 
 def test_find_reference_segments_fallback_to_overlap():
@@ -74,7 +74,8 @@ def test_find_reference_segments_fallback_to_overlap():
     refs = _find_reference_segments(diarization)
     # SPEAKER_01 should fallback to its only (overlap) segment
     assert "SPEAKER_01" in refs
-    assert refs["SPEAKER_01"] == (0.1, 2.0)
+    assert len(refs["SPEAKER_01"]) == 1
+    assert refs["SPEAKER_01"][0] == (0.1, 2.0)
 
 
 # ---------------------------------------------------------------------------
@@ -260,3 +261,101 @@ def test_match_speakers_no_match_below_threshold():
     test_emb = np.array([0.0, 1.0] + [0.0] * 190, dtype=np.float32)
     sim = _cosine_similarity(test_emb, matcher._user_references["张三"])
     assert sim < matcher._match_threshold
+
+
+def test_hungarian_match_optimal_assignment():
+    """Hungarian algorithm finds globally optimal assignment, not greedy."""
+    from transcribe.models.matcher import _hungarian_match
+
+    sim = np.array([
+        [0.95, 0.80],
+        [0.90, 0.20],
+    ])
+    result = _hungarian_match(sim, ["A", "B"], ["Ref1", "Ref2"], threshold=0.5)
+    assert result["A"] == "Ref2"
+    assert result["B"] == "Ref1"
+
+
+def test_hungarian_match_below_threshold():
+    """Pairs below threshold are omitted from mapping."""
+    from transcribe.models.matcher import _hungarian_match
+
+    sim = np.array([[0.3, 0.2]])
+    result = _hungarian_match(sim, ["A"], ["Ref1", "Ref2"], threshold=0.5)
+    assert result == {}
+
+
+def test_hungarian_match_empty_matrix():
+    """Empty similarity matrix returns empty mapping."""
+    from transcribe.models.matcher import _hungarian_match
+
+    sim = np.zeros((0, 0))
+    result = _hungarian_match(sim, [], [], threshold=0.5)
+    assert result == {}
+
+
+def test_hungarian_match_rectangular():
+    """Works with more rows than columns."""
+    from transcribe.models.matcher import _hungarian_match
+
+    sim = np.array([
+        [0.9, 0.2],
+        [0.3, 0.8],
+        [0.1, 0.1],
+    ])
+    result = _hungarian_match(sim, ["A", "B", "C"], ["Ref1", "Ref2"], threshold=0.5)
+    assert result["A"] == "Ref1"
+    assert result["B"] == "Ref2"
+    assert "C" not in result
+
+
+def test_find_reference_segments_returns_multiple():
+    """Returns up to max_segments per speaker, sorted by duration desc."""
+    from transcribe.models.matcher import _find_reference_segments
+
+    diarization = DiarizationResult(
+        segments=[
+            SpeakerSegment("SPEAKER_00", 0.0, 1.0),  # 1.0s
+            SpeakerSegment("SPEAKER_00", 2.0, 4.5),  # 2.5s (longest)
+            SpeakerSegment("SPEAKER_00", 5.0, 6.5),  # 1.5s
+            SpeakerSegment("SPEAKER_00", 7.0, 7.3),  # 0.3s (too short)
+        ],
+        num_speakers=1,
+    )
+
+    refs = _find_reference_segments(diarization, max_segments=3)
+    assert len(refs["SPEAKER_00"]) == 3
+    assert refs["SPEAKER_00"][0] == (2.0, 4.5)  # 2.5s first
+    assert refs["SPEAKER_00"][1] == (5.0, 6.5)  # 1.5s second
+    assert refs["SPEAKER_00"][2] == (0.0, 1.0)  # 1.0s third
+
+
+def test_extract_speaker_embeddings_with_mock():
+    """Multi-segment averaging produces unit-norm embedding."""
+    import torch
+    from unittest.mock import MagicMock
+    from transcribe.models.matcher import _extract_speaker_embeddings
+
+    sr = 16_000
+    audio = AudioSegment(
+        waveform=np.random.randn(sr * 5).astype(np.float32),
+        sample_rate=sr,
+        start_time=0.0,
+        end_time=5.0,
+    )
+    diarization = DiarizationResult(
+        segments=[
+            SpeakerSegment("SPEAKER_00", 0.0, 1.0),
+            SpeakerSegment("SPEAKER_00", 2.0, 3.0),
+        ],
+        num_speakers=1,
+    )
+
+    mock_model = MagicMock()
+    mock_model.encode_batch.return_value = torch.randn(1, 1, 192)
+
+    embeddings = _extract_speaker_embeddings(audio, diarization, mock_model)
+    assert "SPEAKER_00" in embeddings
+    assert embeddings["SPEAKER_00"].shape == (192,)
+    norm = np.linalg.norm(embeddings["SPEAKER_00"])
+    assert abs(norm - 1.0) < 0.01

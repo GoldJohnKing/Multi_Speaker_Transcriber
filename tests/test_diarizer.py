@@ -32,7 +32,8 @@ def mock_pipeline():
         (MockTurn(1.0, 2.5), None, "SPEAKER_01"),
         (MockTurn(2.5, 3.0), None, "SPEAKER_00"),
     ]
-    mock.return_value.itertracks.return_value = tracks
+    # pyannote 4.0: pipeline returns DiarizeOutput with .speaker_diarization
+    mock.return_value.speaker_diarization.itertracks.return_value = tracks
     return mock
 
 
@@ -101,7 +102,7 @@ def test_diarizer_no_overlap_when_single_speaker():
         (MockTurn(0.0, 1.5), None, "SPEAKER_00"),
         (MockTurn(1.5, 3.0), None, "SPEAKER_00"),
     ]
-    mock.return_value.itertracks.return_value = tracks
+    mock.return_value.speaker_diarization.itertracks.return_value = tracks
 
     with patch("transcribe.models.diarizer.Diarizer._load_pipeline", return_value=mock):
         diarizer = Diarizer(device="cpu")
@@ -120,7 +121,7 @@ def test_diarizer_offset_audio(mock_pipeline):
     tracks = [
         (MockTurn(0.0, 1.0), None, "SPEAKER_00"),
     ]
-    mock.return_value.itertracks.return_value = tracks
+    mock.return_value.speaker_diarization.itertracks.return_value = tracks
 
     with patch("transcribe.models.diarizer.Diarizer._load_pipeline", return_value=mock):
         diarizer = Diarizer(device="cpu")

@@ -7,6 +7,11 @@ match tracks to speaker labels via cosine similarity.
 
 Uses SpeechBrain directly (bypasses Pyannote's PretrainedSpeakerEmbedding
 wrapper to avoid use_auth_token compatibility issues with SpeechBrain 1.x).
+
+Matching uses the Hungarian algorithm (scipy.optimize.linear_sum_assignment)
+for globally optimal 1:1 assignment instead of greedy matching. Embeddings
+for reference speakers are computed as duration-weighted averages across
+multiple segments for improved robustness.
 """
 
 from __future__ import annotations
@@ -14,6 +19,7 @@ from __future__ import annotations
 import numpy as np
 import torch
 from pathlib import Path
+from scipy.optimize import linear_sum_assignment
 
 from transcribe.data.types import AudioSegment, DiarizationResult
 
@@ -30,6 +36,38 @@ _SUPPORTED_AUDIO_EXTS = frozenset({".wav", ".mp3", ".flac", ".ogg", ".aac", ".m4
 def _cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
     """Compute cosine similarity between two vectors."""
     return float(np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b) + 1e-8))
+
+
+def _hungarian_match(
+    sim_matrix: np.ndarray,
+    row_labels: list[str],
+    col_labels: list[str],
+    threshold: float,
+) -> dict[str, str]:
+    """Optimal 1:1 assignment via Hungarian algorithm.
+
+    Args:
+        sim_matrix: (n_rows × n_cols) cosine similarity matrix.
+        row_labels: Label for each row.
+        col_labels: Label for each column.
+        threshold: Minimum similarity to accept a match.
+
+    Returns:
+        {row_label: col_label} for accepted pairs. Pairs below threshold
+        are omitted from the mapping.
+    """
+    if sim_matrix.size == 0:
+        return {}
+
+    cost = -sim_matrix
+    row_ind, col_ind = linear_sum_assignment(cost)
+
+    mapping: dict[str, str] = {}
+    for i, j in zip(row_ind, col_ind):
+        if sim_matrix[i, j] >= threshold:
+            mapping[row_labels[i]] = col_labels[j]
+
+    return mapping
 
 
 def _extract_embedding(
@@ -82,36 +120,115 @@ def _load_reference_audio(
 
 def _find_reference_segments(
     diarization: DiarizationResult,
-) -> dict[str, tuple[float, float]]:
-    """Find the longest non-overlap segment for each speaker as reference.
+    max_segments: int = 3,
+) -> dict[str, list[tuple[float, float]]]:
+    """Find the top-N longest non-overlap segments for each speaker.
+
+    Args:
+        diarization: Diarization result with speaker segments.
+        max_segments: Maximum number of segments per speaker (default 3).
 
     Returns:
-        {speaker_id: (start_time, end_time)} of the best reference segment.
+        {speaker_id: [(start_time, end_time), ...]} with segments sorted
+        by duration descending. Returns up to `max_segments` segments per
+        speaker. Falls back to overlap segments if no clean segment exists.
     """
-    references: dict[str, tuple[float, float, float]] = {}  # speaker → (start, end, duration)
+    # Collect non-overlap segments per speaker, sorted by duration desc
+    candidates: dict[str, list[tuple[float, float, float]]] = {}
 
     for seg in diarization.segments:
-        # Skip overlap segments — we want clean single-speaker audio
         if seg.is_overlap:
             continue
-
         duration = seg.end_time - seg.start_time
         if duration < _MIN_REF_SECONDS:
             continue
 
-        if seg.speaker_id not in references or duration > references[seg.speaker_id][2]:
-            references[seg.speaker_id] = (seg.start_time, seg.end_time, duration)
+        if seg.speaker_id not in candidates:
+            candidates[seg.speaker_id] = []
+        candidates[seg.speaker_id].append((seg.start_time, seg.end_time, duration))
 
-    # If a speaker has no non-overlap segments, fall back to the longest
-    # segment regardless of overlap status
-    for seg in diarization.segments:
-        if seg.speaker_id in references:
+    # Sort each speaker's segments by duration descending, take top-N
+    result: dict[str, list[tuple[float, float]]] = {}
+    for speaker_id, segs in candidates.items():
+        segs.sort(key=lambda x: x[2], reverse=True)
+        result[speaker_id] = [(s, e) for s, e, _ in segs[:max_segments]]
+
+    # Fallback: speakers with no non-overlap segments get longest segment
+    # (may be an overlap segment; still enforce minimum duration)
+    all_speakers = {seg.speaker_id for seg in diarization.segments}
+    for speaker_id in all_speakers:
+        if speaker_id in result:
             continue
-        duration = seg.end_time - seg.start_time
-        if seg.speaker_id not in references or duration > references[seg.speaker_id][2]:
-            references[seg.speaker_id] = (seg.start_time, seg.end_time, duration)
+        best: tuple[float, float, float] | None = None
+        for seg in diarization.segments:
+            if seg.speaker_id != speaker_id:
+                continue
+            duration = seg.end_time - seg.start_time
+            if duration < _MIN_REF_SECONDS:
+                continue
+            if best is None or duration > best[2]:
+                best = (seg.start_time, seg.end_time, duration)
+        if best is not None:
+            result[speaker_id] = [(best[0], best[1])]
 
-    return {spk: (s, e) for spk, (s, e, _) in references.items()}
+    return result
+
+
+def _extract_speaker_embeddings(
+    audio: AudioSegment,
+    diarization: DiarizationResult,
+    model,
+    max_segments: int = 3,
+) -> dict[str, np.ndarray]:
+    """Extract duration-weighted average embeddings for each speaker.
+
+    For each speaker, selects up to `max_segments` longest non-overlap
+    segments, extracts embeddings from each, and computes a duration-
+    weighted average embedding.
+
+    Args:
+        audio: Original audio segment.
+        diarization: Diarization result.
+        model: Speaker embedding model.
+        max_segments: Max reference segments per speaker.
+
+    Returns:
+        {speaker_id: embedding vector} for speakers with valid segments.
+    """
+    ref_segments = _find_reference_segments(diarization, max_segments=max_segments)
+    speaker_embeddings: dict[str, np.ndarray] = {}
+
+    for speaker_id, segments in ref_segments.items():
+        embeddings: list[np.ndarray] = []
+        weights: list[float] = []
+
+        for start_t, end_t in segments:
+            start_sample = int((start_t - audio.start_time) * audio.sample_rate)
+            end_sample = int((end_t - audio.start_time) * audio.sample_rate)
+            start_sample = max(0, start_sample)
+            end_sample = min(len(audio.waveform), end_sample)
+            if end_sample <= start_sample:
+                continue
+
+            chunk = audio.waveform[start_sample:end_sample]
+            emb = _extract_embedding(chunk, audio.sample_rate, model)
+            if emb is not None:
+                embeddings.append(emb)
+                weights.append(end_t - start_t)
+
+        if not embeddings:
+            continue
+
+        # Duration-weighted average, then re-normalize to unit vector
+        weights_arr = np.array(weights, dtype=np.float64)
+        weights_arr /= weights_arr.sum()
+        avg = np.average(embeddings, axis=0, weights=weights_arr)
+        norm = np.linalg.norm(avg)
+        if norm > 1e-8:
+            avg = avg / norm
+        speaker_embeddings[speaker_id] = avg
+
+    return speaker_embeddings
 
 
 class SpeakerMatcher:
@@ -202,9 +319,9 @@ class SpeakerMatcher:
     ) -> dict[str, str]:
         """Map diarized speaker IDs to user-provided speaker names.
 
-        For each SPEAKER_XX from diarization, extracts an embedding from the
-        best reference segment and matches it against user-provided reference
-        embeddings via cosine similarity.
+        For each SPEAKER_XX from diarization, extracts duration-weighted
+        embeddings from reference segments and matches them against
+        user-provided reference embeddings via cosine similarity.
 
         Args:
             audio: Original (denoised) full audio.
@@ -217,43 +334,25 @@ class SpeakerMatcher:
         if not self._user_references:
             return {}
 
-        # Find reference segments for each diarized speaker
-        ref_segments = _find_reference_segments(diarization)
+        # Extract embeddings for each diarized speaker (multi-segment averaging)
+        speaker_embeddings = _extract_speaker_embeddings(
+            audio, diarization, self._model
+        )
 
-        # Extract embeddings for each diarized speaker
-        speaker_embeddings: dict[str, np.ndarray] = {}
-        for speaker_id, (start_t, end_t) in ref_segments.items():
-            start_sample = int((start_t - audio.start_time) * audio.sample_rate)
-            end_sample = int((end_t - audio.start_time) * audio.sample_rate)
-            start_sample = max(0, start_sample)
-            end_sample = min(len(audio.waveform), end_sample)
-            if end_sample <= start_sample:
-                continue
+        # Build similarity matrix and match via Hungarian algorithm
+        speaker_ids = list(speaker_embeddings.keys())
+        user_names = list(self._user_references.keys())
 
-            chunk = audio.waveform[start_sample:end_sample]
-            embedding = _extract_embedding(chunk, audio.sample_rate, self._model)
-            if embedding is not None:
-                speaker_embeddings[speaker_id] = embedding
+        sim_matrix = np.zeros((len(speaker_ids), len(user_names)))
+        for i, spk_id in enumerate(speaker_ids):
+            for j, usr_name in enumerate(user_names):
+                sim_matrix[i, j] = _cosine_similarity(
+                    speaker_embeddings[spk_id], self._user_references[usr_name]
+                )
 
-        # Match each diarized speaker to user references
-        name_map: dict[str, str] = {}
-        used_names: set[str] = set()
-
-        # Build all scored pairs and greedily assign
-        scored: list[tuple[str, str, float]] = []
-        for speaker_id, spk_emb in speaker_embeddings.items():
-            for user_name, ref_emb in self._user_references.items():
-                sim = _cosine_similarity(spk_emb, ref_emb)
-                scored.append((speaker_id, user_name, sim))
-
-        scored.sort(key=lambda x: x[2], reverse=True)
-        for speaker_id, user_name, sim in scored:
-            if speaker_id in name_map or user_name in used_names:
-                continue
-            if sim < self._match_threshold:
-                continue
-            name_map[speaker_id] = user_name
-            used_names.add(user_name)
+        name_map = _hungarian_match(
+            sim_matrix, speaker_ids, user_names, self._match_threshold
+        )
 
         return name_map
 
@@ -277,25 +376,12 @@ class SpeakerMatcher:
         if not separated_tracks:
             return {}
 
-        # Step 1: Find reference segments for each speaker
-        ref_segments = _find_reference_segments(diarization)
+        # Extract reference embeddings (multi-segment averaging)
+        ref_embeddings = _extract_speaker_embeddings(
+            audio, diarization, self._model
+        )
 
-        # Step 2: Extract reference embeddings
-        ref_embeddings: dict[str, np.ndarray] = {}
-        for speaker_id, (start_t, end_t) in ref_segments.items():
-            start_sample = int((start_t - audio.start_time) * audio.sample_rate)
-            end_sample = int((end_t - audio.start_time) * audio.sample_rate)
-            start_sample = max(0, start_sample)
-            end_sample = min(len(audio.waveform), end_sample)
-            if end_sample <= start_sample:
-                continue
-
-            chunk = audio.waveform[start_sample:end_sample]
-            embedding = _extract_embedding(chunk, audio.sample_rate, self._model)
-            if embedding is not None:
-                ref_embeddings[speaker_id] = embedding
-
-        # Step 3: Extract track embeddings
+        # Extract track embeddings
         track_embeddings: list[np.ndarray | None] = []
         for track in separated_tracks:
             embedding = _extract_embedding(
@@ -303,28 +389,27 @@ class SpeakerMatcher:
             )
             track_embeddings.append(embedding)
 
-        # Step 4: Match tracks to speakers via cosine similarity
+        # Build similarity matrix and match via Hungarian algorithm
+        valid_indices = [i for i, e in enumerate(track_embeddings) if e is not None]
+        speaker_ids = list(ref_embeddings.keys())
+
+        sim_matrix = np.zeros((len(valid_indices), len(speaker_ids)))
+        for row, track_idx in enumerate(valid_indices):
+            for col, spk_id in enumerate(speaker_ids):
+                sim_matrix[row, col] = _cosine_similarity(
+                    track_embeddings[track_idx], ref_embeddings[spk_id]
+                )
+
+        matched = _hungarian_match(
+            sim_matrix,
+            [str(i) for i in valid_indices],
+            speaker_ids,
+            self._match_threshold,
+        )
+
         mapping: dict[int, str] = {}
-        used_speakers: set[str] = set()
-
-        # Build similarity matrix
-        scored: list[tuple[int, str, float]] = []
-        for track_idx, track_emb in enumerate(track_embeddings):
-            if track_emb is None:
-                continue
-            for speaker_id, ref_emb in ref_embeddings.items():
-                sim = _cosine_similarity(track_emb, ref_emb)
-                scored.append((track_idx, speaker_id, sim))
-
-        # Sort by similarity descending and greedily assign
-        scored.sort(key=lambda x: x[2], reverse=True)
-        for track_idx, speaker_id, sim in scored:
-            if track_idx in mapping or speaker_id in used_speakers:
-                continue
-            if sim < self._match_threshold:
-                continue
-            mapping[track_idx] = speaker_id
-            used_speakers.add(speaker_id)
+        for idx_str, spk_id in matched.items():
+            mapping[int(idx_str)] = spk_id
 
         # Assign UNKNOWN to unmatched tracks
         for idx in range(len(separated_tracks)):
