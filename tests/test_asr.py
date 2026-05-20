@@ -20,12 +20,15 @@ def silence_audio() -> AudioSegment:
     )
 
 
+@pytest.mark.slow
 def test_transcriber_init() -> None:
-    """ASRTranscriber should initialise without error."""
+    """ASRTranscriber should initialise with Fun-ASR-Nano without error."""
     transcriber = ASRTranscriber(device="cpu")
     assert transcriber is not None
+    assert transcriber._hotword_list == []
 
 
+@pytest.mark.slow
 def test_transcribe_silence(silence_audio: AudioSegment) -> None:
     """Silence should produce empty or minimal output, not crash."""
     transcriber = ASRTranscriber(device="cpu")
@@ -35,19 +38,21 @@ def test_transcribe_silence(silence_audio: AudioSegment) -> None:
         assert isinstance(seg, TranscriptSegment)
 
 
-def test_transcribe_with_hotwords(silence_audio: AudioSegment, tmp_path: pytest.TempPathFactory) -> None:
+@pytest.mark.slow
+def test_transcribe_with_hotwords(silence_audio: AudioSegment, tmp_path) -> None:
     """ASRTranscriber should accept a hotword file without error."""
-    hw_file = tmp_path / "hotwords.txt"  # type: ignore[operator]
+    hw_file = tmp_path / "hotwords.txt"
     hw_file.write_text("张三\n李四\n", encoding="utf-8")
     transcriber = ASRTranscriber(device="cpu", hotword_path=str(hw_file))
+    assert transcriber._hotword_list == ["张三", "李四"]
     results = transcriber.transcribe(silence_audio)
     assert isinstance(results, list)
 
 
+@pytest.mark.slow
 def test_load_hotwords_missing_file() -> None:
     """Missing hotword file should be treated as no hotwords."""
     transcriber = ASRTranscriber(device="cpu", hotword_path="/nonexistent/path.txt")
-    assert transcriber._hotwords is None
     assert transcriber._hotword_list == []
 
 
