@@ -1151,7 +1151,7 @@ http = [
 [[package]]
 name = "funasr"
 version = "1.3.1"
-source = { registry = "https://pypi.org/simple" }
+source = { git = "https://github.com/modelscope/FunASR.git#2ca745e5d11ad9650b94691d0d346d1435dc9b63" }
 dependencies = [
     { name = "editdistance" },
     { name = "hydra-core" },
@@ -1173,10 +1173,6 @@ dependencies = [
     { name = "torch-complex" },
     { name = "tqdm" },
     { name = "umap-learn" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/87/dc/d5586cd788bdf75286d73e646f5f354f8b3220b75a61c0325a177689065d/funasr-1.3.1.tar.gz", hash = "sha256:ed813c0ecade7d24393943a82a91f7cee822178ab4bfd303adb8ad318605e0a5", size = 664362, upload-time = "2026-01-26T13:07:43.579Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/57/89/61c09967f0f4f091402367215000c3c060bfeaadbbdc9aca42856d299c95/funasr-1.3.1-py3-none-any.whl", hash = "sha256:f63050d7d625f287ec741b84a0325365699c49550a4bfd3ace4acb43e41a87a8", size = 811975, upload-time = "2026-01-26T13:07:41.866Z" },
 ]
 
 [[package]]
@@ -2067,7 +2063,7 @@ diarize = [
 
 [package.metadata]
 requires-dist = [
-    { name = "funasr", marker = "extra == 'asr'", specifier = ">=1.1" },
+    { name = "funasr", marker = "extra == 'asr'", git = "https://github.com/modelscope/FunASR.git" },
     { name = "modelscope", marker = "extra == 'asr'" },
     { name = "modelscope", marker = "extra == 'diarize'" },
     { name = "multi-speaker-transcribe", extras = ["asr", "diarize"], marker = "extra == 'all'" },

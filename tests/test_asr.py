@@ -125,3 +125,61 @@ def test_restore_repeated_hotword() -> None:
 def test_restore_overlapping_text_not_hotword() -> None:
     """Text containing hotword chars in different order should not be touched."""
     assert restore_hotwords("叶朽来了", ["朽叶"]) == "叶朽来了"
+
+
+# --- Fun-ASR-Nano timestamp parsing tests (pure function, no model needed) ---
+
+
+def test_parse_timestamps_dict_format() -> None:
+    """Fun-ASR-Nano dict-format timestamps: seconds, first start / last end."""
+    from transcribe.models.asr import parse_timestamps
+
+    timestamps = [
+        {"token": "你", "start_time": 0.10, "end_time": 0.20, "score": 0.99},
+        {"token": "好", "start_time": 0.20, "end_time": 0.30, "score": 0.98},
+    ]
+    start, end = parse_timestamps(timestamps)
+    assert start == pytest.approx(0.10)
+    assert end == pytest.approx(0.30)
+
+
+def test_parse_timestamps_single_entry() -> None:
+    """Single-entry timestamp list."""
+    from transcribe.models.asr import parse_timestamps
+
+    timestamps = [
+        {"token": "嗨", "start_time": 0.50, "end_time": 0.60, "score": 0.95},
+    ]
+    start, end = parse_timestamps(timestamps)
+    assert start == pytest.approx(0.50)
+    assert end == pytest.approx(0.60)
+
+
+def test_parse_timestamps_empty_returns_none() -> None:
+    """Empty timestamp list returns (None, None)."""
+    from transcribe.models.asr import parse_timestamps
+
+    start, end = parse_timestamps([])
+    assert start is None
+    assert end is None
+
+
+def test_parse_timestamps_nested_list_format() -> None:
+    """Legacy Paraformer format [[start_ms, end_ms], ...] should still be handled."""
+    from transcribe.models.asr import parse_timestamps
+
+    timestamps = [[100, 200], [200, 350]]
+    start, end = parse_timestamps(timestamps)
+    # Paraformer format is in milliseconds → convert to seconds
+    assert start == pytest.approx(0.100)
+    assert end == pytest.approx(0.350)
+
+
+def test_parse_timestamps_flat_list_format() -> None:
+    """Legacy flat format [start, end, start, end, ...] should still be handled."""
+    from transcribe.models.asr import parse_timestamps
+
+    timestamps = [100, 200, 200, 350]
+    start, end = parse_timestamps(timestamps)
+    assert start == pytest.approx(0.100)
+    assert end == pytest.approx(0.350)

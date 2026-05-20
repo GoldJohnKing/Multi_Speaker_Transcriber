@@ -62,6 +62,47 @@ def restore_hotwords(text: str, hotword_list: list[str]) -> str:
     return combined.sub(_replace, text)
 
 
+def parse_timestamps(
+    timestamps: list,
+) -> tuple[float | None, float | None]:
+    """Extract segment start and end times from ASR timestamp output.
+
+    Handles two timestamp formats:
+
+    1. Fun-ASR-Nano dict format (current):
+       [{"start_time": 0.36, "end_time": 0.42, ...}, ...] — times in **seconds**
+
+    2. Paraformer list format (legacy):
+       [[start_ms, end_ms], ...] — times in **milliseconds**
+       [start_ms, end_ms, start_ms, end_ms, ...] — flat, in **milliseconds**
+
+    Args:
+        timestamps: Raw timestamp data from ASR model output.
+
+    Returns:
+        Tuple of (start_time_seconds, end_time_seconds).
+        (None, None) if timestamps is empty.
+    """
+    if not timestamps:
+        return None, None
+
+    first = timestamps[0]
+
+    if isinstance(first, dict):
+        # Fun-ASR-Nano format: already in seconds
+        return first["start_time"], timestamps[-1]["end_time"]
+
+    if isinstance(first, (list, tuple)):
+        # Nested Paraformer format: [[start_ms, end_ms], ...]
+        return first[0] / 1000.0, timestamps[-1][1] / 1000.0
+
+    if isinstance(first, (int, float)):
+        # Flat Paraformer format: [start_ms, end_ms, start_ms, end_ms, ...]
+        return timestamps[0] / 1000.0, timestamps[-1] / 1000.0
+
+    return None, None
+
+
 class ASRTranscriber:
     """Speech recognition using FunASR SeACo-Paraformer with hotword support."""
 
