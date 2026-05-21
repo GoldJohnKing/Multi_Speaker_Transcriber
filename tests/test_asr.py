@@ -7,6 +7,7 @@ import pytest
 
 from transcribe.data.types import AudioSegment, TranscriptSegment
 from transcribe.models.asr import create_asr, list_backends, restore_hotwords, parse_timestamps
+from transcribe.models.asr.utils import segment_by_timestamps
 from transcribe.models.asr.base import ASRBase
 from transcribe.models.asr.funasr_nano import FunASRNanoTranscriber
 from transcribe.models.asr.funasr_paraformer import FunASRParaformerTranscriber
@@ -264,3 +265,104 @@ def test_parse_timestamps_dict_missing_keys_returns_none() -> None:
     start, end = parse_timestamps(timestamps)
     assert start is None
     assert end is None
+
+
+# --- segment_by_timestamps tests (pure function, no model needed) ---
+
+
+def test_segment_empty_input() -> None:
+    """Empty input returns empty list."""
+    assert segment_by_timestamps([]) == []
+
+
+def test_segment_single_char() -> None:
+    """Single character produces one segment."""
+    result = segment_by_timestamps([("你", 0.0, 0.2)])
+    assert len(result) == 1
+    assert result[0].text == "你"
+    assert result[0].start_time == pytest.approx(0.0)
+    assert result[0].end_time == pytest.approx(0.2)
+
+
+def test_segment_splits_at_sentence_end() -> None:
+    """Segments split at sentence-ending punctuation (。！？)."""
+    char_ts = [
+        ("你", 0.0, 0.2), ("好", 0.2, 0.4), ("。", 0.4, 0.5),
+        ("我", 1.0, 1.2), ("是", 1.2, 1.4), ("。", 1.4, 1.5),
+    ]
+    result = segment_by_timestamps(char_ts)
+    assert len(result) == 2
+    assert result[0].text == "你好。"
+    assert result[0].start_time == pytest.approx(0.0)
+    assert result[0].end_time == pytest.approx(0.5)
+    assert result[1].text == "我是。"
+    assert result[1].start_time == pytest.approx(1.0)
+    assert result[1].end_time == pytest.approx(1.5)
+
+
+def test_segment_max_duration_splits_at_clause() -> None:
+    """When duration exceeds max_duration, split at nearest clause punctuation."""
+    char_ts = [
+        ("今", 0.0, 0.5), ("天", 0.5, 1.0),
+        ("，", 1.0, 1.1),
+        ("天", 1.1, 1.6), ("气", 1.6, 2.1),
+        ("，", 2.1, 2.2),
+        ("很", 2.2, 2.7), ("好", 2.7, 3.2),
+        ("，", 3.2, 3.3),
+        ("我", 3.3, 3.8), ("们", 3.8, 4.3),
+        ("，", 4.3, 4.4),
+        ("出", 4.4, 4.9), ("去", 4.9, 5.4),
+        ("，", 5.4, 5.5),
+        ("玩", 5.5, 6.0), ("吧", 6.0, 6.5),
+        ("。", 6.5, 6.6),
+    ]
+    result = segment_by_timestamps(char_ts, max_duration=4.0)
+    assert len(result) >= 2
+    # First segment should end at or before ~4.5s (allows clause punctuation)
+    assert result[0].end_time <= 4.5
+    for seg in result:
+        duration = seg.end_time - seg.start_time
+        assert duration <= 5.0
+
+
+def test_segment_max_chars_hard_cut() -> None:
+    """When no punctuation and max_chars reached, hard-cut."""
+    char_ts = [(c, float(i) * 0.1, float(i) * 0.1 + 0.1) for i, c in enumerate("一" * 30)]
+    result = segment_by_timestamps(char_ts, max_duration=100.0, max_chars=10)
+    assert len(result) >= 3
+    for seg in result:
+        assert len(seg.text) <= 10
+
+
+def test_segment_no_punctuation_long_duration() -> None:
+    """Long unpunctuated speech triggers hard duration cut."""
+    char_ts = [(f"w{i}", float(i), float(i) + 1.0) for i in range(10)]
+    result = segment_by_timestamps(char_ts, max_duration=5.0, max_chars=100)
+    assert len(result) >= 2
+    for seg in result:
+        duration = seg.end_time - seg.start_time
+        assert duration <= 7.0
+
+
+def test_segment_speaker_id_always_speaker_00() -> None:
+    """All returned segments have speaker_id SPEAKER_00."""
+    char_ts = [
+        ("你", 0.0, 0.2), ("好", 0.2, 0.4), ("。", 0.4, 0.5),
+        ("我", 1.0, 1.2), ("是", 1.2, 1.4), ("。", 1.4, 1.5),
+    ]
+    result = segment_by_timestamps(char_ts)
+    for seg in result:
+        assert seg.speaker_id == "SPEAKER_00"
+
+
+def test_segment_preserves_time_offset() -> None:
+    """Timestamps should preserve any offset in input (e.g. audio.start_time)."""
+    offset = 10.5
+    char_ts = [
+        ("你", offset + 0.0, offset + 0.2),
+        ("好", offset + 0.2, offset + 0.4),
+        ("。", offset + 0.4, offset + 0.5),
+    ]
+    result = segment_by_timestamps(char_ts)
+    assert result[0].start_time == pytest.approx(offset + 0.0)
+    assert result[0].end_time == pytest.approx(offset + 0.5)
