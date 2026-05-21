@@ -165,11 +165,6 @@ def test_restore_no_hotwords() -> None:
     assert restore_hotwords("朽，叶来了", []) == "朽，叶来了"
 
 
-def test_restore_no_hotwords_none_list() -> None:
-    """With empty hotword list, text passes through."""
-    assert restore_hotwords("朽，叶来了", []) == "朽，叶来了"
-
-
 def test_restore_single_char_hotword() -> None:
     """Single-character hotwords can't have internal punctuation, pass through."""
     assert restore_hotwords("好，的", ["好"]) == "好，的"

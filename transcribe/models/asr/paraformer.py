@@ -77,9 +77,10 @@ class FunASRParaformerTranscriber(ASRBase):
 
         for res in result:
             text = res.get("text", "")
-            timestamps = res.get("timestamp", [])
-            if not text or not timestamps:
+            if not text:
                 continue
+
+            timestamps = res.get("timestamp", [])
 
             # Restore hotword terms broken by ct-punc punctuation insertion
             text = restore_hotwords(text, self._hotword_list)

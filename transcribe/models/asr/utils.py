@@ -83,7 +83,7 @@ def parse_timestamps(
     if isinstance(first, dict):
         # Fun-ASR-Nano format: already in seconds
         start = first.get("start_time")
-        end = timestamps[-1].get("end_time") if timestamps else None
+        end = timestamps[-1].get("end_time")
         return start, end
 
     if isinstance(first, (list, tuple)):

@@ -9,6 +9,14 @@ _BACKENDS: dict[str, type[ASRBase]] = {}
 
 def register_backend(name: str, cls: type[ASRBase]) -> None:
     """Register an ASR backend class under the given name."""
+    import warnings
+
+    if name in _BACKENDS:
+        warnings.warn(
+            f"Backend {name!r} already registered by {_BACKENDS[name].__name__}, "
+            f"overwriting with {cls.__name__}",
+            stacklevel=2,
+        )
     _BACKENDS[name] = cls
 
 
