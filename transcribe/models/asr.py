@@ -11,21 +11,20 @@ from funasr import AutoModel
 
 from transcribe.data.types import AudioSegment, TranscriptSegment
 
-# Chinese punctuation characters that ct-punc may insert between hotword chars
+# Chinese punctuation characters that may be inserted between hotword chars
 _PUNC_PATTERN = r"[，。？！、；：""''（）【】《》…—· ]*"
 
 
 def restore_hotwords(text: str, hotword_list: list[str]) -> str:
-    """Remove punctuation that ct-punc inserted inside hotword terms.
+    """Remove punctuation inserted inside hotword terms.
 
-    FunASR's ct-punc model processes Chinese text character-by-character and has
-    no awareness of hotword boundaries.  It may insert commas, periods, etc. in
+    The ASR model's punctuation mechanism may insert commas, periods, etc. in
     the middle of a correctly-recognised hotword (e.g. ``朽，叶`` for the
     hotword ``朽叶``).  This function detects such breakages and restores the
     original hotword form.
 
     Args:
-        text: ASR output text (already punctuated by ct-punc).
+        text: ASR output text (already punctuated).
         hotword_list: List of hotword terms to protect.
 
     Returns:
@@ -90,7 +89,9 @@ def parse_timestamps(
 
     if isinstance(first, dict):
         # Fun-ASR-Nano format: already in seconds
-        return first["start_time"], timestamps[-1]["end_time"]
+        start = first.get("start_time")
+        end = timestamps[-1].get("end_time") if timestamps else None
+        return start, end
 
     if isinstance(first, (list, tuple)):
         # Nested Paraformer format: [[start_ms, end_ms], ...]
@@ -124,9 +125,10 @@ class ASRTranscriber:
             "device": device,
         }
 
-        # BF16 for GPU — fp16 is broken on CUDA (outputs all "!")
+        # BF16 for GPU (Ampere+) — fp16 is broken on CUDA (outputs all "!")
         if device != "cpu":
-            model_kwargs["bf16"] = True
+            if torch.cuda.is_bf16_supported():
+                model_kwargs["bf16"] = True
 
         self._model = AutoModel(**model_kwargs)
 

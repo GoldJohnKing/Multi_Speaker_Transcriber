@@ -188,3 +188,13 @@ def test_parse_timestamps_flat_list_format() -> None:
     start, end = parse_timestamps(timestamps)
     assert start == pytest.approx(0.100)
     assert end == pytest.approx(0.350)
+
+
+def test_parse_timestamps_dict_missing_keys_returns_none() -> None:
+    """Dict entries without start_time/end_time keys should not crash."""
+    from transcribe.models.asr import parse_timestamps
+
+    timestamps = [{"token": "<sil>"}]
+    start, end = parse_timestamps(timestamps)
+    assert start is None
+    assert end is None
