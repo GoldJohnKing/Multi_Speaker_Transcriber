@@ -11,6 +11,61 @@ from transcribe.models.asr.base import ASRBase
 from transcribe.models.asr.factory import register_backend
 from transcribe.models.asr.utils import segment_by_timestamps
 
+# Punctuation characters present in ASR text but absent from ForcedAligner timestamps.
+_PUNCT = frozenset("，。！？,;:、；：…—")
+
+
+def _align_text_to_timestamps(
+    text: str,
+    time_stamps: list,
+    offset: float = 0.0,
+) -> list[tuple[str, float, float]]:
+    """Align *text* (with punctuation) to *time_stamps* (without punctuation).
+
+    The Qwen3-ASR ``text`` field includes punctuation, but the ForcedAligner
+    ``time_stamps`` skip punctuation characters.  This function reconciles the
+    two by interpolating short (20 ms) timestamps for punctuation characters.
+
+    Multi-character tokens in *time_stamps* (e.g. ``"NPC"``) are flattened and
+    their durations distributed evenly across the constituent characters.
+
+    Args:
+        text: Full transcript text including punctuation.
+        time_stamps: ForcedAligner output — objects with ``.text``,
+            ``.start_time``, ``.end_time`` attributes.
+        offset: Seconds to add to every timestamp (typically ``audio.start_time``).
+
+    Returns:
+        ``[(char, start_sec, end_sec), ...]`` suitable for
+        :func:`segment_by_timestamps`.
+    """
+    # Step 1: Flatten multi-char tokens → individual (char, start, end).
+    ts_flat: list[tuple[str, float, float]] = []
+    for ts in time_stamps:
+        n = len(ts.text)
+        dur = ts.end_time - ts.start_time
+        for i, ch in enumerate(ts.text):
+            s = ts.start_time + dur * i / n
+            e = ts.start_time + dur * (i + 1) / n
+            ts_flat.append((ch, offset + s, offset + e))
+
+    # Step 2: Walk through text, matching non-punct chars against ts_flat.
+    aligned: list[tuple[str, float, float]] = []
+    ts_idx = 0
+    for ch in text:
+        if ch in _PUNCT:
+            prev_end = aligned[-1][2] if aligned else offset
+            aligned.append((ch, prev_end, prev_end + 0.02))
+        elif ts_idx < len(ts_flat):
+            aligned.append(ts_flat[ts_idx])
+            ts_idx += 1
+        else:
+            # Unexpected trailing char (shouldn't happen) — best-effort
+            prev_end = aligned[-1][2] if aligned else offset
+            aligned.append((ch, prev_end, prev_end + 0.02))
+
+    return aligned
+
 
 class Qwen3ASRTranscriber(ASRBase):
     """Speech recognition using Qwen3-ASR-1.7B with Qwen3-ForcedAligner-0.6B.
@@ -85,11 +140,8 @@ class Qwen3ASRTranscriber(ASRBase):
                 text=r.text,
             )]
 
-        # Build character-level timestamp list with offset
-        char_ts = [
-            (ts.text, audio.start_time + ts.start_time, audio.start_time + ts.end_time)
-            for ts in r.time_stamps
-        ]
+        # Align text (with punctuation) to time_stamps (without punctuation)
+        char_ts = _align_text_to_timestamps(r.text, r.time_stamps, audio.start_time)
 
         return segment_by_timestamps(char_ts)
 
