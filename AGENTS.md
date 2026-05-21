@@ -69,10 +69,19 @@ transcribe/
 ├── pipeline.py        # 管线编排
 ├── data/types.py      # 核心数据类型（dataclass）
 └── models/            # 各阶段模型实现
+    └── asr/           # ASR 后端包
+        ├── __init__.py    # 注册 + 重导出
+        ├── base.py        # ASRBase 抽象基类
+        ├── factory.py     # create_asr 工厂函数
+        ├── utils.py       # 共享工具（热词修复、时间戳解析）
+        ├── nano.py        # Fun-ASR-Nano 后端
+        └── paraformer.py  # Fun-ASR-Paraformer 后端
 ```
 
 - 每个模型类实现 `process()` / `extract()` / `transcribe()` 等方法，以及 `cleanup()` 用于释放 GPU 显存
+- ASR 后端通过 `create_asr(backend_name, ...)` 工厂函数创建，后端在各自模块中通过 `register_backend()` 自注册
 - 新增管线阶段时，同步更新 `pipeline.py`、`cli.py`（如有新参数）、`data/types.py`（如有新数据类型）、`config.yaml`（如有新配置项）
+- 新增 ASR 后端时，在 `transcribe/models/asr/` 下新建文件，实现 `ASRBase` 子类并调用 `register_backend()`，然后在 `__init__.py` 中 import 触发注册，最后更新 `cli.py` 的 `--backend` choices
 - `config.yaml` 中的顶层字段由 `config.py` 加载，子配置段（`diarizer:`、`matcher:` 等）目前仅为参考，实际参数硬编码在模型类构造函数中
 
 ## 运行时配置

@@ -100,6 +100,9 @@ uv run python -m transcribe input.mp4 --hotwords hotwords/example.txt -o output.
 
 # 使用参考音频自动标注说话人姓名
 uv run python -m transcribe input.mp4 --speaker-ref speakers/ -o output.srt -v
+
+# 选择 ASR 后端（默认 Fun-ASR-Nano）
+uv run python -m transcribe input.mp4 --backend Fun-ASR-Paraformer -o output.srt -v
 ```
 
 ### 输出示例
@@ -125,6 +128,7 @@ uv run python -m transcribe input.mp4 --speaker-ref speakers/ -o output.srt -v
 ```
 usage: transcribe [-h] [-o OUTPUT] [--hotwords FILE] [--num-speakers N]
                   [--no-diarize] [--speaker-ref DIR]
+                  [--backend {Fun-ASR-Paraformer,Fun-ASR-Nano}]
                   [--device {cpu,cuda,auto}] [--cache-dir DIR]
                   [--config FILE] [--keep-cache] [-v]
                   input
@@ -138,6 +142,7 @@ usage: transcribe [-h] [-o OUTPUT] [--hotwords FILE] [--num-speakers N]
   --num-speakers N       已知说话人数量（默认自动检测）
   --no-diarize           禁用说话人识别（纯 ASR 模式）
   --speaker-ref DIR      说话人参考音频目录（文件名即说话人名）
+  --backend BACKEND      ASR 后端：Fun-ASR-Paraformer / Fun-ASR-Nano（默认 Fun-ASR-Nano）
   --device DEVICE        计算设备：cpu / cuda / auto（默认 auto）
   --cache-dir DIR        中间缓存目录（默认 .cache）
   --config FILE          YAML 配置文件路径
@@ -181,8 +186,9 @@ usage: transcribe [-h] [-o OUTPUT] [--hotwords FILE] [--num-speakers N]
                 │
                 ▼
 ┌─────────────────────────────────┐
-│  Stage 3: 语音识别 (ASR)       │  FunASR SeACo-Paraformer
-│  热词增强 + 标点修复           │  + FSMN-VAD + ct-punc
+│  Stage 3: 语音识别 (ASR)       │  Fun-ASR-Nano (默认)
+│  热词增强 + 标点修复           │  或 Fun-ASR-Paraformer
+│  --backend 选择后端           │  + FSMN-VAD
 └───────────────┬─────────────────┘
                 │
                 ▼
@@ -217,9 +223,14 @@ AudioSegment ──→ DiarizationResult ──→ (--speaker-ref)
 当提供说话人参考音频目录时，使用 ERes2NetV2（3D-Speaker）提取 192 维声纹嵌入。对每个说话人，从最长 3 个非重叠片段中提取嵌入并计算时长加权平均值，然后通过匈牙利算法（`scipy.optimize.linear_sum_assignment`）进行全局最优 1:1 匹配，将匿名说话人标签（`SPEAKER_00` 等）关联到参考音频文件名（即说话人姓名）。例如目录下放置 `张三.wav`、`李四.wav`，输出中将显示 `[张三]`、`[李四]` 而非 `[说话人1]`、`[说话人2]`。此阶段需要说话人识别（Stage 2）已启用。
 
 #### Stage 3 — 语音识别
-使用 FunASR SeACo-Paraformer 中文语音识别模型，配合 FSMN-VAD 语音活动检测和 ct-punc 标点恢复。支持热词文件增强领域词汇识别率，并内置热词标点修复逻辑——ct-punc 可能会在热词内部插入标点（如"朽，叶"→"朽叶"），此模块自动修复。
 
-在说话人识别模式下，每个说话人片段独立送入 ASR；在 `--no-diarize` 模式下，整段音频作为单一说话人转录。
+支持两种 ASR 后端，通过 `--backend` 参数选择：
+
+**Fun-ASR-Nano（默认）** — 基于 LLM 的语音识别模型，标点由 LLM 原生生成，无需单独标点模型。支持热词增强，并内置热词标点修复逻辑。GPU 自动启用 BF16（Ampere+）。
+
+**Fun-ASR-Paraformer** — 经典 SeACo-Paraformer 非自回归模型，配合 ct-punc 标点恢复和热词增强。识别速度更快，但标点质量略低于 LLM 方案。
+
+两种后端均内置 FSMN-VAD 语音活动检测。在说话人识别模式下，每个说话人片段独立送入 ASR；在 `--no-diarize` 模式下，整段音频作为单一说话人转录。
 
 #### Stage 4 — SRT 生成
 将转录片段排序、合并相邻同说话人片段，生成标准 SRT 字幕文件。说话人标签格式默认为 `[说话人1]`、`[说话人2]` 等；若提供了 `--speaker-ref` 参考音频，则替换为实际姓名（如 `[张三]`、`[李四]`）。
@@ -232,6 +243,7 @@ AudioSegment ──→ DiarizationResult ──→ (--speaker-ref)
 
 ```yaml
 device: auto              # 计算设备: auto / cpu / cuda
+backend: Fun-ASR-Nano     # ASR 后端: Fun-ASR-Paraformer / Fun-ASR-Nano
 diarize: true             # 说话人识别
 language: zh              # 语言（当前仅支持中文）
 speaker_references: null  # 说话人参考音频目录路径
@@ -247,10 +259,9 @@ matcher:
   min_segment_seconds: 0.5
 
 asr:
-  model: paraformer-zh
+  model: FunAudioLLM/Fun-ASR-Nano-2512
   vad_model: fsmn-vad
-  punc_model: ct-punc
-  batch_size_s: 300
+  vad_max_single_segment_time: 30000
 
 srt:
   max_chars_per_line: 20
@@ -261,7 +272,7 @@ srt:
 
 配置优先级：**CLI 参数 > YAML 配置文件 > 代码默认值**。
 
-> **注意：** `config.yaml` 中的顶层字段（`device`、`diarize` 等）会在运行时加载并生效；下方的子配置段（`diarizer:`、`matcher:` 等）目前仅作参数参考，实际模型参数硬编码在各模型类的构造函数中。
+> **注意：** `config.yaml` 中的顶层字段（`device`、`backend`、`diarize` 等）会在运行时加载并生效；下方的子配置段（`diarizer:`、`matcher:` 等）目前仅作参数参考，实际模型参数硬编码在各模型类的构造函数中。
 
 ---
 
@@ -285,7 +296,13 @@ Multi_Speaker_Transcribe/
 │       ├── audio_extractor.py         # Stage 1: FFmpeg 音频提取
 │       ├── diarizer.py                # Stage 2: Pyannote 说话人识别
 │       ├── matcher.py                 # Stage 2.5: 声纹嵌入匹配
-│       ├── asr.py                     # Stage 3: FunASR 语音识别
+│       ├── asr/                       # Stage 3: ASR 后端包
+│       │   ├── __init__.py            #   注册 + 重导出
+│       │   ├── base.py                #   ASRBase 抽象基类
+│       │   ├── factory.py             #   create_asr 工厂函数
+│       │   ├── utils.py               #   共享工具（热词修复、时间戳解析）
+│       │   ├── nano.py                #   Fun-ASR-Nano 后端
+│       │   └── paraformer.py          #   Fun-ASR-Paraformer 后端
 │       ├── srt_writer.py             # Stage 4: SRT 生成
 │       └── __init__.py
 ├── tests/                             # 测试目录
@@ -303,7 +320,7 @@ Multi_Speaker_Transcribe/
 | `SpeakerSegment` | 说话人时间片段（说话人 ID + 起止时间 + 是否重叠） |
 | `DiarizationResult` | 说话人识别结果（片段列表 + 说话人数量 + 重叠区域） |
 | `TranscriptSegment` | 转录片段（说话人 ID + 起止时间 + 文本） |
-| `PipelineConfig` | 管线配置（含 `speaker_references` 参考音频目录） |
+| `PipelineConfig` | 管线配置（含 `backend` 后端选择、`speaker_references` 参考音频目录） |
 
 ---
 
@@ -344,7 +361,7 @@ uv run python -m transcribe input.mp4 --speaker-ref speakers/ -o output.srt -v
 | 项目 | 用途 | 许可证 |
 |------|------|--------|
 | [PyTorch](https://pytorch.org/) | 深度学习框架 | BSD-3-Clause |
-| [FunASR](https://github.com/modelscope/FunASR) | 中文语音识别（SeACo-Paraformer + VAD + 标点） | MIT |
+| [FunASR](https://github.com/modelscope/FunASR) | 中文语音识别（Fun-ASR-Nano / SeACo-Paraformer + VAD） | MIT |
 | [Pyannote Audio](https://github.com/pyannote/pyannote-audio) | 说话人识别（Speaker Diarization 4.0 Community-1） | MIT |
 | [3D-Speaker](https://github.com/modelscope/3D-Speaker) | 声纹嵌入提取（ERes2NetV2 中文模型） | Apache-2.0 |
 | [FFmpeg](https://ffmpeg.org/) | 音视频格式转换 | LGPL / GPL |
@@ -381,7 +398,7 @@ uv run pytest tests/test_srt_writer.py -v
 | `test_config.py` | 配置加载（默认值、YAML、CLI 覆盖） |
 | `test_audio_extractor.py` | FFmpeg 音频提取 |
 | `test_srt_writer.py` | SRT 生成（时间戳、标签、合并、排序） |
-| `test_asr.py` | ASR 转录 + 热词修复 |
+| `test_asr.py` | 双后端 ASR + 工厂 + 热词修复 + 时间戳解析 |
 | `test_diarizer.py` | 说话人识别（mock） |
 | `test_matcher.py` | 声纹匹配（余弦相似度、参考匹配） |
 | `test_pipeline_basic.py` | CLI 解析 + 基础管线 |
@@ -406,7 +423,8 @@ uv run pytest tests/test_srt_writer.py -v
 |------|------|----------|
 | 说话人识别 | Pyannote 4.0 | ~2-3 GB |
 | 声纹匹配 | ERes2NetV2 | ~0.5 GB |
-| ASR | SeACo-Paraformer | ~1-2 GB |
+| ASR | Fun-ASR-Nano (默认) | ~1-2 GB |
+| ASR | Fun-ASR-Paraformer | ~1-2 GB |
 
 管线在各阶段之间释放模型显存（`cleanup()`），避免同时加载所有模型。
 
