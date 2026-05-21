@@ -26,8 +26,17 @@ diarize = [
     "scipy",
     "simplejson",
 ]
+qwen-asr = [
+    "qwen-asr",
+    "torch>=2.1",
+    "torchaudio>=2.1",
+    "transformers>=4.45",
+    "accelerate",
+    "librosa",
+    "soundfile",
+]
 all = [
-    "multi-speaker-transcribe[funasr,diarize]",
+    "multi-speaker-transcribe[funasr,diarize,qwen-asr]",
 ]
 dev = [
     "pytest>=8.0",
