@@ -42,16 +42,13 @@ git clone <repo-url>
 cd Multi_Speaker_Transcribe
 
 # 2. 安装全部依赖（含 ASR、识别、声纹匹配）
+# PyTorch 会自动从 CPU 索引安装，无需手动操作
 uv sync --extra all
 
-# 3a. NVIDIA GPU 用户 — 安装 CUDA 版 PyTorch
-uv pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu121
-
-# 3b. AMD ROCm 用户 — 安装 ROCm 版 PyTorch
-uv pip install torch torchaudio --index-url https://download.pytorch.org/whl/rocm6.2
-
-# 3c. 仅 CPU — 安装 CPU 版 PyTorch
-uv pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
+# （可选）切换到 CUDA 版 PyTorch：
+# 编辑 pyproject.toml，将 pytorch-cpu 索引 URL 改为：
+#   url = "https://download.pytorch.org/whl/cu121"
+# 然后执行：uv lock && uv sync
 ```
 
 ### 按需安装
@@ -60,7 +57,8 @@ uv pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
 
 | 依赖组 | 命令 | 包含功能 |
 |--------|------|----------|
-| `funasr` | `uv sync --extra funasr` | 语音识别（FunASR + PyTorch） |
+| `funasr` | `uv sync --extra funasr` | 语音识别 — FunASR + PyTorch |
+| `qwen-asr` | `uv sync --extra qwen-asr` | 语音识别 — Qwen3-ASR + PyTorch |
 | `diarize` | `uv sync --extra diarize` | 说话人识别 + 声纹匹配（Pyannote + ModelScope + scipy） |
 | `all` | `uv sync --extra all` | 全部功能 |
 
@@ -102,6 +100,7 @@ uv run python -m transcribe input.mp4 --hotwords hotwords/example.txt -o output.
 uv run python -m transcribe input.mp4 --speaker-ref speakers/ -o output.srt -v
 
 # 选择 ASR 后端（默认 Fun-ASR-Nano）
+uv run python -m transcribe input.mp4 --backend Qwen3-ASR -o output.srt -v
 uv run python -m transcribe input.mp4 --backend Fun-ASR-Paraformer -o output.srt -v
 ```
 
@@ -128,7 +127,7 @@ uv run python -m transcribe input.mp4 --backend Fun-ASR-Paraformer -o output.srt
 ```
 usage: transcribe [-h] [-o OUTPUT] [--hotwords FILE] [--num-speakers N]
                   [--no-diarize] [--speaker-ref DIR]
-                  [--backend {Fun-ASR-Paraformer,Fun-ASR-Nano}]
+                  [--backend {Fun-ASR-Paraformer,Fun-ASR-Nano,Qwen3-ASR}]
                   [--device {cpu,cuda,auto}] [--cache-dir DIR]
                   [--config FILE] [--keep-cache] [-v]
                   input
@@ -142,7 +141,7 @@ usage: transcribe [-h] [-o OUTPUT] [--hotwords FILE] [--num-speakers N]
   --num-speakers N       已知说话人数量（默认自动检测）
   --no-diarize           禁用说话人识别（纯 ASR 模式）
   --speaker-ref DIR      说话人参考音频目录（文件名即说话人名）
-  --backend BACKEND      ASR 后端：Fun-ASR-Paraformer / Fun-ASR-Nano（默认 Fun-ASR-Nano）
+  --backend BACKEND      ASR 后端：Fun-ASR-Paraformer / Fun-ASR-Nano / Qwen3-ASR（默认 Fun-ASR-Nano）
   --device DEVICE        计算设备：cpu / cuda / auto（默认 auto）
   --cache-dir DIR        中间缓存目录（默认 .cache）
   --config FILE          YAML 配置文件路径
@@ -188,7 +187,7 @@ usage: transcribe [-h] [-o OUTPUT] [--hotwords FILE] [--num-speakers N]
 ┌─────────────────────────────────┐
 │  Stage 3: 语音识别 (ASR)       │  Fun-ASR-Nano (默认)
 │  热词增强 + 标点修复           │  或 Fun-ASR-Paraformer
-│  --backend 选择后端           │  + FSMN-VAD
+│  --backend 选择后端           │  或 Qwen3-ASR
 └───────────────┬─────────────────┘
                 │
                 ▼
@@ -224,13 +223,17 @@ AudioSegment ──→ DiarizationResult ──→ (--speaker-ref)
 
 #### Stage 3 — 语音识别
 
-支持两种 ASR 后端，通过 `--backend` 参数选择：
+支持三种 ASR 后端，通过 `--backend` 参数选择：
 
-**Fun-ASR-Nano（默认）** — 基于 LLM 的语音识别模型，标点由 LLM 原生生成，无需单独标点模型。支持热词增强，并内置热词标点修复逻辑。GPU 自动启用 BF16（Ampere+）。
+**Fun-ASR-Nano（默认）** — 基于 LLM 的语音识别模型，标点由 LLM 原生生成，无需单独标点模型。支持热词增强（`hotwords=list[str]`），并内置热词标点修复逻辑。GPU 自动启用 BF16（Ampere+）。
 
-**Fun-ASR-Paraformer** — 经典 SeACo-Paraformer 非自回归模型，配合 ct-punc 标点恢复和热词增强。识别速度更快，但标点质量略低于 LLM 方案。
+**Fun-ASR-Paraformer** — 经典 SeACo-Paraformer 非自回归模型，配合 ct-punc 标点恢复和热词增强（`hotword=str`）。识别速度更快，但标点质量略低于 LLM 方案。
 
-两种后端均内置 FSMN-VAD 语音活动检测。在说话人识别模式下，每个说话人片段独立送入 ASR；在 `--no-diarize` 模式下，整段音频作为单一说话人转录。
+两种 FunASR 后端均内置 FSMN-VAD 语音活动检测，自动将长音频切分为多个短句。
+
+**Qwen3-ASR** — 基于 Qwen3 LLM 的语音识别模型（1.7B），配合 Qwen3-ForcedAligner（0.6B）提供字符级时间戳。在中文基准测试中达到 SOTA 准确率（AISHELL-2 CER 2.71%），支持 30+ 语言和 22 种中文方言。热词通过 `context` 参数以 LLM prompt 方式注入。无内置 VAD，字幕分段由 `segment_by_timestamps()` 实现（标点 + 时长混合策略）。VRAM 需求较高（~7 GB）。
+
+在说话人识别模式下，每个说话人片段独立送入 ASR；在 `--no-diarize` 模式下，整段音频作为单一说话人转录。所有后端的字幕输出统一移除句末标点（。！？），逗号级标点保留在字幕行内。
 
 #### Stage 4 — SRT 生成
 将转录片段排序、合并相邻同说话人片段，生成标准 SRT 字幕文件。说话人标签格式默认为 `[说话人1]`、`[说话人2]` 等；若提供了 `--speaker-ref` 参考音频，则替换为实际姓名（如 `[张三]`、`[李四]`）。
@@ -243,7 +246,7 @@ AudioSegment ──→ DiarizationResult ──→ (--speaker-ref)
 
 ```yaml
 device: auto              # 计算设备: auto / cpu / cuda
-backend: Fun-ASR-Nano     # ASR 后端: Fun-ASR-Paraformer / Fun-ASR-Nano
+backend: Fun-ASR-Nano     # ASR 后端: Fun-ASR-Paraformer / Fun-ASR-Nano / Qwen3-ASR
 diarize: true             # 说话人识别
 language: zh              # 语言（当前仅支持中文）
 speaker_references: null  # 说话人参考音频目录路径
@@ -300,9 +303,10 @@ Multi_Speaker_Transcribe/
 │       │   ├── __init__.py            #   注册 + 重导出
 │       │   ├── base.py                #   ASRBase 抽象基类
 │       │   ├── factory.py             #   create_asr 工厂函数
-│       │   ├── utils.py               #   共享工具（热词修复、时间戳解析）
+│       │   ├── utils.py               #   共享工具（热词修复、时间戳解析、字幕分段）
 │       │   ├── funasr_nano.py        #   Fun-ASR-Nano 后端
-│       │   └── funasr_paraformer.py  #   Fun-ASR-Paraformer 后端
+│       │   ├── funasr_paraformer.py  #   Fun-ASR-Paraformer 后端
+│       │   └── qwen3_asr.py         #   Qwen3-ASR 后端
 │       ├── srt_writer.py             # Stage 4: SRT 生成
 │       └── __init__.py
 ├── tests/                             # 测试目录
@@ -362,6 +366,7 @@ uv run python -m transcribe input.mp4 --speaker-ref speakers/ -o output.srt -v
 |------|------|--------|
 | [PyTorch](https://pytorch.org/) | 深度学习框架 | BSD-3-Clause |
 | [FunASR](https://github.com/modelscope/FunASR) | 中文语音识别（Fun-ASR-Nano / SeACo-Paraformer + VAD） | MIT |
+| [Qwen3-ASR](https://github.com/QwenLM/Qwen3-ASR) | 多语言语音识别（Qwen3-ASR-1.7B + ForcedAligner） | Apache-2.0 |
 | [Pyannote Audio](https://github.com/pyannote/pyannote-audio) | 说话人识别（Speaker Diarization 4.0 Community-1） | MIT |
 | [3D-Speaker](https://github.com/modelscope/3D-Speaker) | 声纹嵌入提取（ERes2NetV2 中文模型） | Apache-2.0 |
 | [FFmpeg](https://ffmpeg.org/) | 音视频格式转换 | LGPL / GPL |
@@ -398,7 +403,8 @@ uv run pytest tests/test_srt_writer.py -v
 | `test_config.py` | 配置加载（默认值、YAML、CLI 覆盖） |
 | `test_audio_extractor.py` | FFmpeg 音频提取 |
 | `test_srt_writer.py` | SRT 生成（时间戳、标签、合并、排序） |
-| `test_asr.py` | 双后端 ASR + 工厂 + 热词修复 + 时间戳解析 |
+| `test_asr.py` | 三后端注册 + 工厂 + 热词修复 + 时间戳解析 + 字幕分段 |
+| `test_qwen3_asr.py` | Qwen3-ASR 后端注册、热词加载、文本-时间戳对齐、mock 转写 |
 | `test_diarizer.py` | 说话人识别（mock） |
 | `test_matcher.py` | 声纹匹配（余弦相似度、参考匹配） |
 | `test_pipeline_basic.py` | CLI 解析 + 基础管线 |
@@ -425,6 +431,7 @@ uv run pytest tests/test_srt_writer.py -v
 | 声纹匹配 | ERes2NetV2 | ~0.5 GB |
 | ASR | Fun-ASR-Nano (默认) | ~1-2 GB |
 | ASR | Fun-ASR-Paraformer | ~1-2 GB |
+| ASR | Qwen3-ASR | ~7 GB (ASR 5G + Aligner 2G) |
 
 管线在各阶段之间释放模型显存（`cleanup()`），避免同时加载所有模型。
 

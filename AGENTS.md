@@ -27,26 +27,25 @@ uv run pytest                # 运行测试
 |------|----------|------|
 | 核心 | `uv sync` | numpy, pyyaml, rich, soundfile（始终安装） |
 | `funasr` | `uv sync --extra funasr` | FunASR, torch, torchaudio, modelscope |
+| `qwen-asr` | `uv sync --extra qwen-asr` | qwen-asr, torch, torchaudio, transformers, accelerate |
 | `diarize` | `uv sync --extra diarize` | pyannote.audio, scipy, modelscope |
 | `all` | `uv sync --extra all` | 以上全部 |
 | `dev` | `uv sync --extra dev` | pytest（通常与 `--extra all` 组合） |
 
 ### PyTorch 安装
 
-PyTorch（torch/torchaudio）需要根据硬件平台单独安装，不在 `uv sync` 中自动处理：
+PyTorch（torch/torchaudio）通过 `pyproject.toml` 中的 `[[tool.uv.index]]` 和 `[tool.uv.sources]` 配置自动从 PyTorch 官方 wheel 索引安装，**无需手动 `pip install`**。
 
-```bash
-# NVIDIA CUDA
-uv pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu121
+当前默认使用 **CPU 版本**（`https://download.pytorch.org/whl/cpu`）。切换到 CUDA：
 
-# AMD ROCm
-uv pip install torch torchaudio --index-url https://download.pytorch.org/whl/rocm6.2
-
-# CPU only
-uv pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
+```toml
+# pyproject.toml 中修改索引 URL：
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cu121"   # ← 改为 CUDA
 ```
 
-修改 pyproject.toml 中 `asr` 组的 torch 版本约束时，注意与上述安装方式保持兼容。
+修改后执行 `uv lock && uv sync` 即可。
 
 ## 测试
 
@@ -70,12 +69,13 @@ transcribe/
 ├── data/types.py      # 核心数据类型（dataclass）
 └── models/            # 各阶段模型实现
     └── asr/           # ASR 后端包
-        ├── __init__.py    # 注册 + 重导出
-        ├── base.py        # ASRBase 抽象基类
-        ├── factory.py     # create_asr 工厂函数
-        ├── utils.py       # 共享工具（热词修复、时间戳解析）
-        ├── funasr_nano.py       # Fun-ASR-Nano 后端
-        └── funasr_paraformer.py # Fun-ASR-Paraformer 后端
+        ├── __init__.py         # 注册 + 重导出
+        ├── base.py             # ASRBase 抽象基类
+        ├── factory.py          # create_asr 工厂函数
+        ├── utils.py            # 共享工具（热词修复、时间戳解析、字幕分段）
+        ├── funasr_nano.py      # Fun-ASR-Nano 后端
+        ├── funasr_paraformer.py # Fun-ASR-Paraformer 后端
+        └── qwen3_asr.py       # Qwen3-ASR 后端
 ```
 
 - 每个模型类实现 `process()` / `extract()` / `transcribe()` 等方法，以及 `cleanup()` 用于释放 GPU 显存
@@ -83,6 +83,18 @@ transcribe/
 - 新增管线阶段时，同步更新 `pipeline.py`、`cli.py`（如有新参数）、`data/types.py`（如有新数据类型）、`config.yaml`（如有新配置项）
 - 新增 ASR 后端时，在 `transcribe/models/asr/` 下新建文件，实现 `ASRBase` 子类并调用 `register_backend()`，然后在 `__init__.py` 中 import 触发注册，最后更新 `cli.py` 的 `--backend` choices
 - `config.yaml` 中的顶层字段由 `config.py` 加载，子配置段（`diarizer:`、`matcher:` 等）目前仅为参考，实际参数硬编码在模型类构造函数中
+
+### ASR 后端差异
+
+| 后端 | 模型 | 热词机制 | 时间戳来源 | 字幕分段 |
+|------|------|---------|-----------|---------|
+| Fun-ASR-Nano | FunAudioLLM/Fun-ASR-Nano-2512 | `hotwords=list[str]` 解码器偏置 | FSMN-VAD 分段 | VAD 分段 |
+| Fun-ASR-Paraformer | speech_seaco_paraformer_large | `hotword=str` 解码器偏置 | FSMN-VAD 分段 | VAD 分段 |
+| Qwen3-ASR | Qwen3-ASR-1.7B + ForcedAligner-0.6B | `context=str` LLM prompt 偏置 | ForcedAligner 字符级对齐 | 标点 + 时长混合分段 |
+
+- FunASR 后端内置 VAD 自动分段；Qwen3-ASR 无 VAD，使用 `segment_by_timestamps()` 混合分段策略
+- Qwen3-ASR 的 `text` 含标点但 `time_stamps` 不含标点，需通过 `_align_text_to_timestamps()` 对齐
+- `segment_by_timestamps()` 在句末标点（。！？）处分段并移除标点；逗号级标点保留在字幕行内
 
 ## 运行时配置
 
