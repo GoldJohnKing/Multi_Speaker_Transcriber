@@ -92,23 +92,24 @@ class Qwen3ASRTranscriber(ASRBase):
             return []
 
         r = results[0]
-        text = r.text
 
-        # 从字符级时间戳中提取段边界
-        start_time = audio.start_time
-        end_time = audio.end_time
-        if r.time_stamps:
-            ts_first = r.time_stamps[0]
-            ts_last = r.time_stamps[-1]
-            start_time = audio.start_time + ts_first.start_time
-            end_time = audio.start_time + ts_last.end_time
+        # 无时间戳时退化为整段输出
+        if not r.time_stamps:
+            return [TranscriptSegment(
+                speaker_id="SPEAKER_00",
+                start_time=audio.start_time,
+                end_time=audio.end_time,
+                text=r.text,
+            )]
 
-        return [TranscriptSegment(
-            speaker_id="SPEAKER_00",
-            start_time=start_time,
-            end_time=end_time,
-            text=text,
-        )]
+        # 将字符级时间戳转换为偏移量后的列表
+        char_ts = [
+            (ts.text, audio.start_time + ts.start_time, audio.start_time + ts.end_time)
+            for ts in r.time_stamps
+        ]
+
+        # 混合分段：标点优先 + 最大时长上限
+        return segment_by_timestamps(char_ts)
 
     def cleanup(self) -> None:
         del self._model
@@ -135,7 +136,7 @@ register_backend("Qwen3-ASR", Qwen3ASRTranscriber)
 | `supports_hotwords = True` | 通过 `context` 参数实现，对管线透明 |
 | 热词 → context 直接空格 join | 官方示例用法；模型训练为将 system prompt token 作为背景知识，无需额外提示语 |
 | 延迟导入 `qwen_asr` | 未安装 `qwen-asr` 时 `import transcribe.models.asr` 不会报错 |
-| 时间戳：首/尾字符级 → 段边界 | 管线按 diarization 段切分传入，每个片段较短，首尾映射足够 |
+| 字符级时间戳 → 混合分段 | 与 FunASR VAD 多句输出一致，产生多条字幕；无需外接 VAD |
 
 ## Hotwords / Context Biasing
 
@@ -150,11 +151,94 @@ Qwen3-ASR 不使用 FunASR 风格的加权热词解码，而是通过 LLM system
 
 用户侧完全透明：同一个热词文件，三个后端各用各自的方式消费。
 
+## Subtitle Segmentation
+
+### Problem
+
+FunASR 后端内置 `fsmn-vad`，会自动将音频按静音切分为多个短句，每次 `transcribe()` 返回**多条** `TranscriptSegment`。Qwen3-ASR 没有内置 VAD，ASR + ForcedAligner 返回的是整段音频的**单一完整文本 + 字符级时间戳**。
+
+如果不做分段，长音频只会产生 1 条字幕，SRT 可读性极差。
+
+### Approach: Character-Level Timestamp Segmentation (No External VAD)
+
+利用 ForcedAligner 的字符级时间戳，通过混合策略将整段文本拆分为字幕粒度的多条片段。无需引入额外 VAD 模型。
+
+**`qwen-asr` 包已内置长音频自动分段**：当 `return_time_stamps=True` 时，以 180 秒为界、基于能量检测在静音点切分，每个分片独立 ASR + ForcedAligner 后合并。因此我们只需处理「分片内」的字幕拆分。
+
+### Algorithm: `segment_by_timestamps()`
+
+放置在 `transcribe/models/asr/utils.py` 中，与 `parse_timestamps`、`restore_hotwords` 并列。
+
+```python
+# utils.py 新增
+
+_SENTENCE_END = set("。！？!?")
+_CLAUSE_END = set("，；：,;:")
+
+def segment_by_timestamps(
+    char_ts: list[tuple[str, float, float]],
+    max_duration: float = 7.0,
+    max_chars: int = 25,
+) -> list[TranscriptSegment]:
+    """将字符级时间戳拆分为字幕粒度的 TranscriptSegment。
+
+    混合策略：
+    1. 遇到句末标点（。！？）→ 分段
+    2. 累积时长超过 max_duration → 向前找逗号级标点分段
+    3. 找不到标点 → 硬切
+    4. 累积字符超过 max_chars → 硬切（兜底）
+
+    Args:
+        char_ts: [(text, start_sec, end_sec), ...] 字符级时间戳列表
+        max_duration: 单条字幕最大时长（秒）
+        max_chars: 单条字幕最大字符数
+
+    Returns:
+        拆分后的 TranscriptSegment 列表
+    """
+```
+
+### Strategy Comparison
+
+| 策略 | 说明 | 优点 | 缺点 |
+|------|------|------|------|
+| 纯标点分段 | 在 。！？ 处分段 | 语言学自然 | 无标点长句会超长 |
+| 纯时长上限 | 每 N 秒硬切 | 保证时长可控 | 可能切断短语 |
+| 纯静音间隔 | 字符间隔 > 阈值时分段 | 模拟 VAD | 连续语流无分段点 |
+| **混合策略（选用）** | 标点优先 + 时长上限 + 字符数兜底 | 自然边界 + 硬性保证 | 实现稍复杂 |
+
+### Comparison with FunASR VAD Segmentation
+
+| 维度 | FunASR VAD | Qwen3-ASR 混合分段 |
+|------|-----------|-------------------|
+| 分段依据 | 声学静音（>阈值） | 语言学标点 + 时长上限 |
+| 时间精度 | ±100-200ms（静音边缘） | ±20-50ms（字符级对齐） |
+| 时长控制 | 间接（依赖 VAD 灵敏度） | 直接（`max_duration` 参数） |
+| 分段质量 | 偶尔在句子中间切分 | 优先在句法边界切分 |
+| 额外依赖 | `fsmn-vad` 模型 | 无（ForcedAligner 已包含） |
+
+### Walkthrough Example
+
+输入（字符级时间戳）：
+```
+今(0.00,0.15) 天(0.15,0.28) 天(0.28,0.42) 气(0.42,0.55) 很(0.55,0.68) 好(0.68,0.82) ，(0.82,0.88)
+我(1.00,1.12) 们(1.12,1.25) 去(1.25,1.38) 公(1.38,1.52) 园(1.52,1.65) 散(1.65,1.78) 步(1.78,1.92) 吧(1.92,2.05) 。(2.05,2.10)
+```
+
+输出（`max_duration=7.0`）：
+```
+TranscriptSegment(speaker_id="SPEAKER_00", start=0.00, end=0.88, text="今天天气很好，")
+TranscriptSegment(speaker_id="SPEAKER_00", start=1.00, end=2.10, text="我们去公园散步吧。")
+```
+
+在句末标点处自然分段，时长远低于 7s 上限。对于长句（如 8 秒无句号），算法会在 `max_duration` 处找最近的逗号分段，保证不会出现超长字幕。
+
 ## Files to Modify
 
 | File | Change |
 |------|--------|
 | `transcribe/models/asr/qwen3_asr.py` | 🆕 新增 — Qwen3ASRTranscriber 类 |
+| `transcribe/models/asr/utils.py` | ✏️ 修改 — 新增 `segment_by_timestamps()` 函数 |
 | `transcribe/models/asr/__init__.py` | +1 行 `from transcribe.models.asr import qwen3_asr` |
 | `transcribe/cli.py` | `--backend` choices 添加 `"Qwen3-ASR"` |
 | `pyproject.toml` | 新增 `qwen-asr` 依赖组 |
@@ -210,6 +294,10 @@ all = [
 | `test_supports_hotwords_true` | 无 | 验证 `supports_hotwords` 返回 `True` |
 | `test_import_error_message` | 无 | mock `qwen_asr` 不存在时，实例化报错含安装提示 |
 | `test_load_context` | 无 | 验证热词文件读取 + 空格 join |
+| `test_segment_by_timestamps_basic` | 无 | 标点分段：验证在 。！？ 处拆分 |
+| `test_segment_by_timestamps_max_duration` | 无 | 时长上限：长句在逗号处拆分 |
+| `test_segment_by_timestamps_max_chars` | 无 | 字符数兜底：无标点长句硬切 |
+| `test_segment_by_timestamps_empty` | 无 | 空输入返回空列表 |
 | `test_transcribe` | `@pytest.mark.slow` | 集成测试：加载模型 + 转写短音频 |
 | `test_cleanup` | `@pytest.mark.slow` | 验证 cleanup 后显存释放 |
 
