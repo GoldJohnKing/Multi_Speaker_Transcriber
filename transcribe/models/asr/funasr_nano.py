@@ -78,7 +78,7 @@ class FunASRNanoTranscriber(ASRBase):
             batch_size=1,
             language="中文",
             itn=True,
-            hotwords=self._hotword_list if self._hotword_list else None,
+            hotwords=self._hotword_list,
         )
 
         segments: list[TranscriptSegment] = []
