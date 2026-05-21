@@ -2058,14 +2058,6 @@ all = [
     { name = "torchaudio" },
     { name = "transformers" },
 ]
-asr = [
-    { name = "funasr" },
-    { name = "modelscope" },
-    { name = "tiktoken" },
-    { name = "torch" },
-    { name = "torchaudio" },
-    { name = "transformers" },
-]
 dev = [
     { name = "pytest" },
 ]
@@ -2077,14 +2069,22 @@ diarize = [
     { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "simplejson" },
 ]
+funasr = [
+    { name = "funasr" },
+    { name = "modelscope" },
+    { name = "tiktoken" },
+    { name = "torch" },
+    { name = "torchaudio" },
+    { name = "transformers" },
+]
 
 [package.metadata]
 requires-dist = [
     { name = "addict", marker = "extra == 'diarize'" },
-    { name = "funasr", marker = "extra == 'asr'", git = "https://github.com/modelscope/FunASR.git?rev=2ca745e5d11ad9650b94691d0d346d1435dc9b63" },
-    { name = "modelscope", marker = "extra == 'asr'" },
+    { name = "funasr", marker = "extra == 'funasr'", git = "https://github.com/modelscope/FunASR.git?rev=2ca745e5d11ad9650b94691d0d346d1435dc9b63" },
     { name = "modelscope", marker = "extra == 'diarize'" },
-    { name = "multi-speaker-transcribe", extras = ["asr", "diarize"], marker = "extra == 'all'" },
+    { name = "modelscope", marker = "extra == 'funasr'" },
+    { name = "multi-speaker-transcribe", extras = ["funasr", "diarize"], marker = "extra == 'all'" },
     { name = "numpy" },
     { name = "pyannote-audio", marker = "extra == 'diarize'", specifier = ">=4.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
@@ -2093,12 +2093,12 @@ requires-dist = [
     { name = "scipy", marker = "extra == 'diarize'" },
     { name = "simplejson", marker = "extra == 'diarize'" },
     { name = "soundfile" },
-    { name = "tiktoken", marker = "extra == 'asr'" },
-    { name = "torch", marker = "extra == 'asr'", specifier = ">=2.1" },
-    { name = "torchaudio", marker = "extra == 'asr'", specifier = ">=2.1" },
-    { name = "transformers", marker = "extra == 'asr'" },
+    { name = "tiktoken", marker = "extra == 'funasr'" },
+    { name = "torch", marker = "extra == 'funasr'", specifier = ">=2.1" },
+    { name = "torchaudio", marker = "extra == 'funasr'", specifier = ">=2.1" },
+    { name = "transformers", marker = "extra == 'funasr'" },
 ]
-provides-extras = ["asr", "diarize", "all", "dev"]
+provides-extras = ["funasr", "diarize", "all", "dev"]
 
 [[package]]
 name = "multidict"

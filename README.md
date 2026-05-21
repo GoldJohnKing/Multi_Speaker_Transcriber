@@ -60,7 +60,7 @@ uv pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
 
 | 依赖组 | 命令 | 包含功能 |
 |--------|------|----------|
-| `asr` | `uv sync --extra asr` | 语音识别（FunASR + PyTorch） |
+| `funasr` | `uv sync --extra funasr` | 语音识别（FunASR + PyTorch） |
 | `diarize` | `uv sync --extra diarize` | 说话人识别 + 声纹匹配（Pyannote + ModelScope + scipy） |
 | `all` | `uv sync --extra all` | 全部功能 |
 

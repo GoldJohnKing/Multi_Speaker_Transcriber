@@ -11,7 +11,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-asr = [
+funasr = [
     "funasr @ git+https://github.com/modelscope/FunASR.git@2ca745e5d11ad9650b94691d0d346d1435dc9b63",
     "modelscope",
     "tiktoken",
@@ -27,7 +27,7 @@ diarize = [
     "simplejson",
 ]
 all = [
-    "multi-speaker-transcribe[asr,diarize]",
+    "multi-speaker-transcribe[funasr,diarize]",
 ]
 dev = [
     "pytest>=8.0",

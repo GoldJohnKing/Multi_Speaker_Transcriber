@@ -212,7 +212,7 @@ Use the git-versioned `funasr` from the current branch as the unified dependency
 
 ```toml
 [project.optional-dependencies]
-asr = [
+funasr = [
     "funasr @ git+https://github.com/modelscope/FunASR.git@2ca745e5d11ad9650b94691d0d346d1435dc9b63",
     "modelscope",
     "tiktoken",
