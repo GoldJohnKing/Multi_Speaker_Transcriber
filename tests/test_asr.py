@@ -8,8 +8,8 @@ import pytest
 from transcribe.data.types import AudioSegment, TranscriptSegment
 from transcribe.models.asr import create_asr, list_backends, restore_hotwords, parse_timestamps
 from transcribe.models.asr.base import ASRBase
-from transcribe.models.asr.nano import FunASRNanoTranscriber
-from transcribe.models.asr.paraformer import FunASRParaformerTranscriber
+from transcribe.models.asr.funasr_nano import FunASRNanoTranscriber
+from transcribe.models.asr.funasr_paraformer import FunASRParaformerTranscriber
 
 
 @pytest.fixture

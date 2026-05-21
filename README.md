@@ -301,8 +301,8 @@ Multi_Speaker_Transcribe/
 │       │   ├── base.py                #   ASRBase 抽象基类
 │       │   ├── factory.py             #   create_asr 工厂函数
 │       │   ├── utils.py               #   共享工具（热词修复、时间戳解析）
-│       │   ├── nano.py                #   Fun-ASR-Nano 后端
-│       │   └── paraformer.py          #   Fun-ASR-Paraformer 后端
+│       │   ├── funasr_nano.py        #   Fun-ASR-Nano 后端
+│       │   └── funasr_paraformer.py  #   Fun-ASR-Paraformer 后端
 │       ├── srt_writer.py             # Stage 4: SRT 生成
 │       └── __init__.py
 ├── tests/                             # 测试目录

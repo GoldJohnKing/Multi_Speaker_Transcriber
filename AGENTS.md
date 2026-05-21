@@ -74,8 +74,8 @@ transcribe/
         ├── base.py        # ASRBase 抽象基类
         ├── factory.py     # create_asr 工厂函数
         ├── utils.py       # 共享工具（热词修复、时间戳解析）
-        ├── nano.py        # Fun-ASR-Nano 后端
-        └── paraformer.py  # Fun-ASR-Paraformer 后端
+        ├── funasr_nano.py       # Fun-ASR-Nano 后端
+        └── funasr_paraformer.py # Fun-ASR-Paraformer 后端
 ```
 
 - 每个模型类实现 `process()` / `extract()` / `transcribe()` 等方法，以及 `cleanup()` 用于释放 GPU 显存
