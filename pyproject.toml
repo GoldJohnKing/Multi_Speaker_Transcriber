@@ -20,9 +20,11 @@ asr = [
     "transformers",
 ]
 diarize = [
+    "addict",
     "modelscope",
     "pyannote.audio>=4.0",
     "scipy",
+    "simplejson",
 ]
 all = [
     "multi-speaker-transcribe[asr,diarize]",
