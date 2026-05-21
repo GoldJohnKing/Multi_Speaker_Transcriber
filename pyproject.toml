@@ -11,30 +11,34 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# ─── ASR backends ───
 funasr = [
     "funasr @ git+https://github.com/modelscope/FunASR.git@2ca745e5d11ad9650b94691d0d346d1435dc9b63",
     "modelscope",
     "tiktoken",
-    "torch>=2.1",
-    "torchaudio>=2.1",
+    "torch>=2.8",
+    "torchaudio>=2.8",
     "transformers",
-]
-diarize = [
-    "addict",
-    "modelscope",
-    "pyannote.audio>=4.0",
-    "scipy",
-    "simplejson",
 ]
 qwen-asr = [
     "qwen-asr",
-    "torch>=2.1",
-    "torchaudio>=2.1",
+    "torch>=2.8",
+    "torchaudio>=2.8",
     "transformers>=4.45",
     "accelerate",
     "librosa",
-    "soundfile",
 ]
+
+# ─── Diarization ───
+diarize = [
+    "addict",
+    "modelscope",
+    "pyannote.audio>=4.0.4",
+    "scipy",
+    "simplejson",
+]
+
+# ─── Convenience ───
 all = [
     "multi-speaker-transcribe[funasr,diarize,qwen-asr]",
 ]
@@ -60,3 +64,17 @@ testpaths = ["tests"]
 markers = [
     "slow: marks tests as slow (requires model downloads)",
 ]
+
+# ─── PyTorch index configuration ───
+# Routes torch/torchaudio through PyTorch's CPU wheel index instead of PyPI.
+# This ensures a complete torch installation (including torch.distributed).
+# To switch to CUDA, change the index URL to https://download.pytorch.org/whl/cu121.
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+torch = [{ index = "pytorch-cpu" }]
+torchaudio = [{ index = "pytorch-cpu" }]
