@@ -111,7 +111,7 @@ def segment_by_timestamps(
     """Split character-level timestamps into subtitle-grade segments.
 
     Hybrid strategy:
-    1. Split at sentence-ending punctuation (。！？).
+    1. Split at sentence-ending punctuation (。！？), discarding the punctuation.
     2. When accumulated duration exceeds *max_duration*, split at the
        nearest preceding clause punctuation (，；：).
     3. When no clause punctuation is found, hard-cut at *max_duration*.
@@ -123,12 +123,21 @@ def segment_by_timestamps(
         max_chars: Maximum characters per subtitle segment.
 
     Returns:
-        List of :class:`TranscriptSegment`.
+        List of :class:`TranscriptSegment`.  Sentence-ending punctuation
+        (。！？!?) is consumed as split points but **not** included in output text.
     """
     if not char_ts:
         return []
 
     from transcribe.data.types import TranscriptSegment
+
+    def _flush(buf: list[str], s: float, e: float) -> TranscriptSegment:
+        return TranscriptSegment(
+            speaker_id="SPEAKER_00",
+            start_time=s,
+            end_time=e,
+            text="".join(buf),
+        )
 
     segments: list[TranscriptSegment] = []
     buf_text: list[str] = []
@@ -136,20 +145,17 @@ def segment_by_timestamps(
     last_clause_idx: int | None = None  # index into buf_text
 
     for i, (text, start, end) in enumerate(char_ts):
-        buf_text.append(text)
 
-        # Flush at sentence-ending punctuation
+        # Flush at sentence-ending punctuation — punctuation is discarded
         if text in _SENTENCE_END:
-            segments.append(TranscriptSegment(
-                speaker_id="SPEAKER_00",
-                start_time=buf_start,
-                end_time=end,
-                text="".join(buf_text),
-            ))
+            if buf_text:
+                segments.append(_flush(buf_text, buf_start, end))
             buf_text = []
             buf_start = char_ts[i + 1][1] if i + 1 < len(char_ts) else end
             last_clause_idx = None
             continue
+
+        buf_text.append(text)
 
         # Track clause punctuation positions for fallback splitting
         if text in _CLAUSE_END:
@@ -164,12 +170,7 @@ def segment_by_timestamps(
             after = buf_text[last_clause_idx + 1 :]
             before_end = char_ts[i - len(after)][2]
 
-            segments.append(TranscriptSegment(
-                speaker_id="SPEAKER_00",
-                start_time=buf_start,
-                end_time=before_end,
-                text="".join(before),
-            ))
+            segments.append(_flush(before, buf_start, before_end))
             buf_text = after
             buf_start = char_ts[i - len(after) + 1][1]
             last_clause_idx = None
@@ -177,12 +178,7 @@ def segment_by_timestamps(
 
         # Max duration exceeded with no clause punctuation — hard cut
         if duration > max_duration and len(buf_text) > 1:
-            segments.append(TranscriptSegment(
-                speaker_id="SPEAKER_00",
-                start_time=buf_start,
-                end_time=end,
-                text="".join(buf_text),
-            ))
+            segments.append(_flush(buf_text, buf_start, end))
             buf_text = []
             buf_start = char_ts[i + 1][1] if i + 1 < len(char_ts) else end
             last_clause_idx = None
@@ -190,12 +186,7 @@ def segment_by_timestamps(
 
         # Max chars exceeded — hard cut
         if char_count >= max_chars:
-            segments.append(TranscriptSegment(
-                speaker_id="SPEAKER_00",
-                start_time=buf_start,
-                end_time=end,
-                text="".join(buf_text),
-            ))
+            segments.append(_flush(buf_text, buf_start, end))
             buf_text = []
             buf_start = char_ts[i + 1][1] if i + 1 < len(char_ts) else end
             last_clause_idx = None
@@ -203,11 +194,6 @@ def segment_by_timestamps(
 
     # Flush remaining buffer
     if buf_text:
-        segments.append(TranscriptSegment(
-            speaker_id="SPEAKER_00",
-            start_time=buf_start,
-            end_time=char_ts[-1][2],
-            text="".join(buf_text),
-        ))
+        segments.append(_flush(buf_text, buf_start, char_ts[-1][2]))
 
     return segments

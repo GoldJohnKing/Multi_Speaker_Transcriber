@@ -293,10 +293,10 @@ def test_segment_splits_at_sentence_end() -> None:
     ]
     result = segment_by_timestamps(char_ts)
     assert len(result) == 2
-    assert result[0].text == "你好。"
+    assert result[0].text == "你好"  # punctuation discarded
     assert result[0].start_time == pytest.approx(0.0)
     assert result[0].end_time == pytest.approx(0.5)
-    assert result[1].text == "我是。"
+    assert result[1].text == "我是"  # punctuation discarded
     assert result[1].start_time == pytest.approx(1.0)
     assert result[1].end_time == pytest.approx(1.5)
 

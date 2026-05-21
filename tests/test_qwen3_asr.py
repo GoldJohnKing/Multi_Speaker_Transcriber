@@ -115,7 +115,7 @@ def test_transcribe_with_mocked_model() -> None:
     )
     result = instance.transcribe(audio)
     assert len(result) == 1
-    assert result[0].text == "你好。"
+    assert result[0].text == "你好"  # sentence-end 。 discarded
     assert result[0].start_time == pytest.approx(1.0)
     assert result[0].end_time == pytest.approx(1.42)  # 1.0 + 0.4 + 0.02 (punc interp)
 
@@ -287,9 +287,9 @@ def test_transcribe_multi_sentence_preserves_punctuation() -> None:
     )
     result = instance.transcribe(audio)
     assert len(result) == 2
-    assert result[0].text == "你好。"
-    assert result[1].text == "我是。"
+    assert result[0].text == "你好"  # 。 discarded
+    assert result[1].text == "我是"  # 。 discarded
     assert result[0].start_time == pytest.approx(0.0)
-    assert result[0].end_time == pytest.approx(0.42)  # 0.4 + 0.02 (punc)
+    assert result[0].end_time == pytest.approx(0.42)  # 0.4 + 0.02 (punc interp)
     assert result[1].start_time == pytest.approx(1.0)
-    assert result[1].end_time == pytest.approx(1.42)  # 1.4 + 0.02 (punc)
+    assert result[1].end_time == pytest.approx(1.42)  # 1.4 + 0.02 (punc interp)
