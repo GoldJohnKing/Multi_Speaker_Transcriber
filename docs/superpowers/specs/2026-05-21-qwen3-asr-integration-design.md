@@ -233,6 +233,34 @@ TranscriptSegment(speaker_id="SPEAKER_00", start=1.00, end=2.10, text="我们去
 
 在句末标点处自然分段，时长远低于 7s 上限。对于长句（如 8 秒无句号），算法会在 `max_duration` 处找最近的逗号分段，保证不会出现超长字幕。
 
+## Compatibility: Speaker Reference Matching
+
+**Qwen3-ASR 完全支持现有声纹特征匹配功能，无需任何额外适配。**
+
+声纹匹配（`SpeakerMatcher`，使用 ERes2NetV2 声纹 embedding + 余弦相似度 + 匈牙利算法匹配）与 ASR 后端**完全解耦**。其数据流为：
+
+```
+Diarization (Pyannote) → 切出每位说话人音频段 → ERes2NetV2 提取 192 维声纹 embedding
+                       → 与参考声样 cosine similarity 匹配 → {SPEAKER_XX: 用户名}
+```
+
+在管线中的执行顺序（`pipeline.py`）：
+
+```
+Stage 1: 音频提取
+Stage 2: 说话人识别 (Diarization)          ← 产出 diarization segments
+Stage 2.5: 声纹匹配 (SpeakerMatcher)       ← 仅依赖 audio + diarization，不依赖 ASR
+Stage 3: ASR 转写                          ← 产出 TranscriptSegment，speaker_id 来自 diarization
+Stage 4: SRT 生成                          ← speaker_name_map 替换 SPEAKER_XX → 用户名
+```
+
+`SpeakerMatcher` 的输入仅为 `audio`（原始波形）和 `diarization`（说话人分段），不使用任何 ASR 输出。因此 ASR 后端的选择（Fun-ASR-Paraformer / Fun-ASR-Nano / Qwen3-ASR）对声纹匹配无影响。
+
+使用方式与其他后端一致：
+```bash
+uv run python -m transcribe audio.wav --backend Qwen3-ASR --speaker-ref ./speaker_samples/
+```
+
 ## Files to Modify
 
 | File | Change |
