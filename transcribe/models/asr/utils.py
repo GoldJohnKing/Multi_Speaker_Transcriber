@@ -211,21 +211,3 @@ def segment_by_timestamps(
         ))
 
     return segments
-
-    first = timestamps[0]
-
-    if isinstance(first, dict):
-        # Fun-ASR-Nano format: already in seconds
-        start = first.get("start_time")
-        end = timestamps[-1].get("end_time")
-        return start, end
-
-    if isinstance(first, (list, tuple)):
-        # Nested Paraformer format: [[start_ms, end_ms], ...]
-        return first[0] / 1000.0, timestamps[-1][1] / 1000.0
-
-    if isinstance(first, (int, float)):
-        # Flat Paraformer format: [start_ms, end_ms, start_ms, end_ms, ...]
-        return timestamps[0] / 1000.0, timestamps[-1] / 1000.0
-
-    return None, None
