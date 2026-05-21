@@ -111,7 +111,7 @@ class ASRTranscriber:
         self,
         device: str = "cpu",
         hotword_path: str | None = None,
-        model_name: str = "iic/Fun-ASR-Nano-2512",
+        model_name: str = "FunAudioLLM/Fun-ASR-Nano-2512",
         vad_model: str = "fsmn-vad",
     ) -> None:
         self._device = device

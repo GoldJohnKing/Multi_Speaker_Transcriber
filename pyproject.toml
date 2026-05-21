@@ -14,8 +14,10 @@ dependencies = [
 asr = [
     "funasr @ git+https://github.com/modelscope/FunASR.git@2ca745e5d11ad9650b94691d0d346d1435dc9b63",
     "modelscope",
+    "tiktoken",
     "torch>=2.1",
     "torchaudio>=2.1",
+    "transformers",
 ]
 diarize = [
     "modelscope",
