@@ -6,8 +6,10 @@ import sys
 import types
 from unittest.mock import patch
 
+import numpy as np
 import pytest
 
+from transcribe.data.types import AudioSegment, TranscriptSegment
 from transcribe.models.asr import list_backends
 from transcribe.models.asr.base import ASRBase
 from transcribe.models.asr.factory import _BACKENDS
@@ -73,3 +75,95 @@ def test_load_context_empty_file_returns_empty() -> None:
     result = instance._load_context(path)
     assert result == ""
     pathlib.Path(path).unlink()
+
+
+def test_load_context_missing_file_returns_empty() -> None:
+    """_load_context with missing file returns empty string (no crash)."""
+    cls = _BACKENDS["Qwen3-ASR"]
+    instance = cls.__new__(cls)
+    result = instance._load_context("/nonexistent/path/hotwords.txt")
+    assert result == ""
+
+
+def test_transcribe_with_mocked_model() -> None:
+    """transcribe() should convert character-level timestamps to segments."""
+    from transcribe.models.asr.qwen3_asr import Qwen3ASRTranscriber
+
+    TS = types.SimpleNamespace
+    cls = _BACKENDS["Qwen3-ASR"]
+    instance = cls.__new__(cls)
+    instance._context = ""
+    instance._language = None
+
+    mock_result = TS(
+        text="你好。",
+        time_stamps=[
+            TS(text="你", start_time=0.0, end_time=0.2),
+            TS(text="好", start_time=0.2, end_time=0.4),
+            TS(text="。", start_time=0.4, end_time=0.5),
+        ],
+    )
+    instance._model = types.SimpleNamespace(
+        transcribe=lambda **kw: [mock_result]
+    )
+
+    audio = AudioSegment(
+        waveform=np.zeros(8000, dtype=np.float32),
+        sample_rate=16000,
+        start_time=1.0,
+        end_time=2.0,
+    )
+    result = instance.transcribe(audio)
+    assert len(result) == 1
+    assert result[0].text == "你好。"
+    assert result[0].start_time == pytest.approx(1.0)
+    assert result[0].end_time == pytest.approx(1.5)
+
+
+def test_transcribe_empty_result() -> None:
+    """transcribe() returns empty list when model returns no text."""
+    from transcribe.models.asr.qwen3_asr import Qwen3ASRTranscriber
+
+    cls = _BACKENDS["Qwen3-ASR"]
+    instance = cls.__new__(cls)
+    instance._context = ""
+    instance._language = None
+    instance._model = types.SimpleNamespace(
+        transcribe=lambda **kw: [types.SimpleNamespace(text="", time_stamps=None)]
+    )
+
+    audio = AudioSegment(
+        waveform=np.zeros(8000, dtype=np.float32),
+        sample_rate=16000,
+        start_time=0.0,
+        end_time=1.0,
+    )
+    result = instance.transcribe(audio)
+    assert result == []
+
+
+def test_transcribe_no_timestamps_fallback() -> None:
+    """transcribe() falls back to audio boundaries when no timestamps."""
+    from transcribe.models.asr.qwen3_asr import Qwen3ASRTranscriber
+
+    cls = _BACKENDS["Qwen3-ASR"]
+    instance = cls.__new__(cls)
+    instance._context = ""
+    instance._language = None
+    instance._model = types.SimpleNamespace(
+        transcribe=lambda **kw: [
+            types.SimpleNamespace(text="你好", time_stamps=None)
+        ]
+    )
+
+    audio = AudioSegment(
+        waveform=np.zeros(8000, dtype=np.float32),
+        sample_rate=16000,
+        start_time=5.0,
+        end_time=7.0,
+    )
+    result = instance.transcribe(audio)
+    assert len(result) == 1
+    assert result[0].text == "你好"
+    assert result[0].start_time == pytest.approx(5.0)
+    assert result[0].end_time == pytest.approx(7.0)

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import torch
 
 from transcribe.data.types import AudioSegment, TranscriptSegment
@@ -101,7 +103,10 @@ class Qwen3ASRTranscriber(ASRBase):
         """Read hotword file, join with spaces for Qwen3-ASR ``context`` param."""
         if not path:
             return ""
-        with open(path, encoding="utf-8") as f:
+        p = Path(path)
+        if not p.exists():
+            return ""
+        with open(p, encoding="utf-8") as f:
             terms = [line.strip() for line in f if line.strip()]
         return " ".join(terms)
 

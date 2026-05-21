@@ -171,7 +171,7 @@ def segment_by_timestamps(
                 text="".join(before),
             ))
             buf_text = after
-            buf_start = start
+            buf_start = char_ts[i - len(after) + 1][1]
             last_clause_idx = None
             continue
 

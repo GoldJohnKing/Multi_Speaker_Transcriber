@@ -27,11 +27,12 @@ def silence_audio() -> AudioSegment:
 # --- Factory tests ---
 
 
-def test_list_backends_contains_both() -> None:
-    """Both backends should be registered."""
+def test_list_backends_contains_all() -> None:
+    """All three backends should be registered."""
     backends = list_backends()
     assert "Fun-ASR-Paraformer" in backends
     assert "Fun-ASR-Nano" in backends
+    assert "Qwen3-ASR" in backends
 
 
 def test_create_asr_unknown_backend_raises() -> None:
@@ -318,8 +319,13 @@ def test_segment_max_duration_splits_at_clause() -> None:
     ]
     result = segment_by_timestamps(char_ts, max_duration=4.0)
     assert len(result) >= 2
-    # First segment should end at or before ~4.5s (allows clause punctuation)
-    assert result[0].end_time <= 4.5
+    # First segment should end at the clause punctuation (，at 3.3s)
+    assert result[0].end_time == pytest.approx(3.3)
+    # Second segment must start where first ended (the char after the split)
+    assert result[1].start_time == pytest.approx(3.3)
+    # No gaps or overlaps between segments
+    for j in range(len(result) - 1):
+        assert result[j + 1].start_time >= result[j].end_time
     for seg in result:
         duration = seg.end_time - seg.start_time
         assert duration <= 5.0
