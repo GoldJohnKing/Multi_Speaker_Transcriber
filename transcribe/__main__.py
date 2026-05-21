@@ -12,6 +12,7 @@ def main() -> None:
         cli_overrides={
             "device": args.device,
             "diarize": not args.no_diarize,
+            "backend": args.backend,
             "hotwords": args.hotwords,
             "num_speakers": args.num_speakers,
             "cache_dir": args.cache_dir,

@@ -39,6 +39,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Compute device",
     )
     parser.add_argument(
+        "--backend",
+        choices=["Fun-ASR-Paraformer", "Fun-ASR-Nano"],
+        default="Fun-ASR-Nano",
+        help="ASR backend (default: Fun-ASR-Nano)",
+    )
+    parser.add_argument(
         "--cache-dir", default=".cache", help="Intermediate cache directory"
     )
     parser.add_argument("--config", help="YAML config file path")

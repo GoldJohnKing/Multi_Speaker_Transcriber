@@ -60,6 +60,7 @@ class PipelineConfig:
 
     device: str = "auto"  # "cpu" | "cuda" | "auto"
     diarize: bool = True  # enable speaker diarization (Pyannote)
+    backend: str = "Fun-ASR-Nano"  # ASR backend name
     hotwords: str | None = None  # hotword file path
     language: str = "zh"
     cache_dir: str = ".cache"

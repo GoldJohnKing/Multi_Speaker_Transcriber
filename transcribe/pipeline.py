@@ -15,7 +15,7 @@ from transcribe.data.types import (
     TranscriptSegment,
 )
 from transcribe.models.audio_extractor import AudioExtractor
-from transcribe.models.asr import ASRTranscriber
+from transcribe.models.asr import create_asr
 from transcribe.models.diarizer import Diarizer
 from transcribe.models.srt_writer import SrtWriter
 
@@ -132,7 +132,7 @@ def run_pipeline(
     step_start = time.time()
     if verbose:
         console.print(f"[{step}/{total_stages}] 语音转文字 ...", end=" ")
-    transcriber = ASRTranscriber(device=device, hotword_path=config.hotwords)
+    transcriber = create_asr(config.backend, device=device, hotword_path=config.hotwords)
     all_segments: list[TranscriptSegment] = []
     _min_samples = int(0.3 * audio.sample_rate)
 

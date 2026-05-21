@@ -1,5 +1,6 @@
 device: auto
 diarize: true
+backend: Fun-ASR-Nano  # 可选 Fun-ASR-Paraformer / Fun-ASR-Nano
 language: zh
 speaker_references: null
 
@@ -18,7 +19,7 @@ asr:
   vad_model: fsmn-vad
   vad_max_single_segment_time: 30000
   # No punc_model — Fun-ASR-Nano generates punctuation via LLM
-  # bf16 is auto-enabled for GPU in ASRTranscriber
+  # bf16 is auto-enabled for GPU in FunASRNanoTranscriber
 
 srt:
   max_chars_per_line: 20
