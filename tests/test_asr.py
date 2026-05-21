@@ -1,4 +1,4 @@
-"""Tests for the ASR transcriber module."""
+"""Tests for the ASR backend modules."""
 
 from __future__ import annotations
 
@@ -6,7 +6,10 @@ import numpy as np
 import pytest
 
 from transcribe.data.types import AudioSegment, TranscriptSegment
-from transcribe.models.asr import ASRTranscriber, restore_hotwords
+from transcribe.models.asr import create_asr, list_backends, restore_hotwords, parse_timestamps
+from transcribe.models.asr.base import ASRBase
+from transcribe.models.asr.nano import FunASRNanoTranscriber
+from transcribe.models.asr.paraformer import FunASRParaformerTranscriber
 
 
 @pytest.fixture
@@ -20,18 +23,58 @@ def silence_audio() -> AudioSegment:
     )
 
 
+# --- Factory tests ---
+
+
+def test_list_backends_contains_both() -> None:
+    """Both backends should be registered."""
+    backends = list_backends()
+    assert "Fun-ASR-Paraformer" in backends
+    assert "Fun-ASR-Nano" in backends
+
+
+def test_create_asr_unknown_backend_raises() -> None:
+    """Unknown backend name should raise ValueError."""
+    with pytest.raises(ValueError, match="Unknown ASR backend"):
+        create_asr("nonexistent")
+
+
 @pytest.mark.slow
-def test_transcriber_init() -> None:
-    """ASRTranscriber should initialise with Fun-ASR-Nano without error."""
-    transcriber = ASRTranscriber(device="cpu")
+def test_create_asr_returns_correct_type() -> None:
+    """create_asr should return the correct backend class."""
+    nano = create_asr("Fun-ASR-Nano", device="cpu")
+    assert isinstance(nano, FunASRNanoTranscriber)
+    assert isinstance(nano, ASRBase)
+
+    paraformer = create_asr("Fun-ASR-Paraformer", device="cpu")
+    assert isinstance(paraformer, FunASRParaformerTranscriber)
+    assert isinstance(paraformer, ASRBase)
+
+
+@pytest.mark.slow
+def test_backends_support_hotwords() -> None:
+    """Both backends should declare hotword support."""
+    nano = create_asr("Fun-ASR-Nano", device="cpu")
+    paraformer = create_asr("Fun-ASR-Paraformer", device="cpu")
+    assert nano.supports_hotwords is True
+    assert paraformer.supports_hotwords is True
+
+
+# --- FunASRNanoTranscriber slow tests ---
+
+
+@pytest.mark.slow
+def test_nano_init() -> None:
+    """FunASRNanoTranscriber should initialise without error."""
+    transcriber = FunASRNanoTranscriber(device="cpu")
     assert transcriber is not None
     assert transcriber._hotword_list == []
 
 
 @pytest.mark.slow
-def test_transcribe_silence(silence_audio: AudioSegment) -> None:
+def test_nano_transcribe_silence(silence_audio: AudioSegment) -> None:
     """Silence should produce empty or minimal output, not crash."""
-    transcriber = ASRTranscriber(device="cpu")
+    transcriber = FunASRNanoTranscriber(device="cpu")
     results = transcriber.transcribe(silence_audio)
     assert isinstance(results, list)
     for seg in results:
@@ -39,20 +82,62 @@ def test_transcribe_silence(silence_audio: AudioSegment) -> None:
 
 
 @pytest.mark.slow
-def test_transcribe_with_hotwords(silence_audio: AudioSegment, tmp_path) -> None:
-    """ASRTranscriber should accept a hotword file without error."""
+def test_nano_transcribe_with_hotwords(silence_audio: AudioSegment, tmp_path) -> None:
+    """FunASRNanoTranscriber should accept a hotword file without error."""
     hw_file = tmp_path / "hotwords.txt"
     hw_file.write_text("张三\n李四\n", encoding="utf-8")
-    transcriber = ASRTranscriber(device="cpu", hotword_path=str(hw_file))
+    transcriber = FunASRNanoTranscriber(device="cpu", hotword_path=str(hw_file))
     assert transcriber._hotword_list == ["张三", "李四"]
     results = transcriber.transcribe(silence_audio)
     assert isinstance(results, list)
 
 
 @pytest.mark.slow
-def test_load_hotwords_missing_file() -> None:
+def test_nano_load_hotwords_missing_file() -> None:
     """Missing hotword file should be treated as no hotwords."""
-    transcriber = ASRTranscriber(device="cpu", hotword_path="/nonexistent/path.txt")
+    transcriber = FunASRNanoTranscriber(device="cpu", hotword_path="/nonexistent/path.txt")
+    assert transcriber._hotword_list == []
+
+
+# --- FunASRParaformerTranscriber slow tests ---
+
+
+@pytest.mark.slow
+def test_paraformer_init() -> None:
+    """FunASRParaformerTranscriber should initialise without error."""
+    transcriber = FunASRParaformerTranscriber(device="cpu")
+    assert transcriber is not None
+    assert transcriber._hotwords is None
+    assert transcriber._hotword_list == []
+
+
+@pytest.mark.slow
+def test_paraformer_transcribe_silence(silence_audio: AudioSegment) -> None:
+    """Silence should produce empty or minimal output, not crash."""
+    transcriber = FunASRParaformerTranscriber(device="cpu")
+    results = transcriber.transcribe(silence_audio)
+    assert isinstance(results, list)
+    for seg in results:
+        assert isinstance(seg, TranscriptSegment)
+
+
+@pytest.mark.slow
+def test_paraformer_transcribe_with_hotwords(silence_audio: AudioSegment, tmp_path) -> None:
+    """FunASRParaformerTranscriber should accept a hotword file without error."""
+    hw_file = tmp_path / "hotwords.txt"
+    hw_file.write_text("张三\n李四\n", encoding="utf-8")
+    transcriber = FunASRParaformerTranscriber(device="cpu", hotword_path=str(hw_file))
+    assert transcriber._hotwords == "张三 李四"
+    assert transcriber._hotword_list == ["张三", "李四"]
+    results = transcriber.transcribe(silence_audio)
+    assert isinstance(results, list)
+
+
+@pytest.mark.slow
+def test_paraformer_load_hotwords_missing_file() -> None:
+    """Missing hotword file should be treated as no hotwords."""
+    transcriber = FunASRParaformerTranscriber(device="cpu", hotword_path="/nonexistent/path.txt")
+    assert transcriber._hotwords is None
     assert transcriber._hotword_list == []
 
 
@@ -87,7 +172,6 @@ def test_restore_no_hotwords_none_list() -> None:
 
 def test_restore_single_char_hotword() -> None:
     """Single-character hotwords can't have internal punctuation, pass through."""
-    # "好" is single char — no restoration pattern built, text unchanged
     assert restore_hotwords("好，的", ["好"]) == "好，的"
 
 
@@ -132,13 +216,11 @@ def test_restore_overlapping_text_not_hotword() -> None:
     assert restore_hotwords("叶朽来了", ["朽叶"]) == "叶朽来了"
 
 
-# --- Fun-ASR-Nano timestamp parsing tests (pure function, no model needed) ---
+# --- Timestamp parsing tests (pure function, no model needed) ---
 
 
 def test_parse_timestamps_dict_format() -> None:
     """Fun-ASR-Nano dict-format timestamps: seconds, first start / last end."""
-    from transcribe.models.asr import parse_timestamps
-
     timestamps = [
         {"token": "你", "start_time": 0.10, "end_time": 0.20, "score": 0.99},
         {"token": "好", "start_time": 0.20, "end_time": 0.30, "score": 0.98},
@@ -150,8 +232,6 @@ def test_parse_timestamps_dict_format() -> None:
 
 def test_parse_timestamps_single_entry() -> None:
     """Single-entry timestamp list."""
-    from transcribe.models.asr import parse_timestamps
-
     timestamps = [
         {"token": "嗨", "start_time": 0.50, "end_time": 0.60, "score": 0.95},
     ]
@@ -162,8 +242,6 @@ def test_parse_timestamps_single_entry() -> None:
 
 def test_parse_timestamps_empty_returns_none() -> None:
     """Empty timestamp list returns (None, None)."""
-    from transcribe.models.asr import parse_timestamps
-
     start, end = parse_timestamps([])
     assert start is None
     assert end is None
@@ -171,19 +249,14 @@ def test_parse_timestamps_empty_returns_none() -> None:
 
 def test_parse_timestamps_nested_list_format() -> None:
     """Legacy Paraformer format [[start_ms, end_ms], ...] should still be handled."""
-    from transcribe.models.asr import parse_timestamps
-
     timestamps = [[100, 200], [200, 350]]
     start, end = parse_timestamps(timestamps)
-    # Paraformer format is in milliseconds → convert to seconds
     assert start == pytest.approx(0.100)
     assert end == pytest.approx(0.350)
 
 
 def test_parse_timestamps_flat_list_format() -> None:
     """Legacy flat format [start, end, start, end, ...] should still be handled."""
-    from transcribe.models.asr import parse_timestamps
-
     timestamps = [100, 200, 200, 350]
     start, end = parse_timestamps(timestamps)
     assert start == pytest.approx(0.100)
@@ -192,8 +265,6 @@ def test_parse_timestamps_flat_list_format() -> None:
 
 def test_parse_timestamps_dict_missing_keys_returns_none() -> None:
     """Dict entries without start_time/end_time keys should not crash."""
-    from transcribe.models.asr import parse_timestamps
-
     timestamps = [{"token": "<sil>"}]
     start, end = parse_timestamps(timestamps)
     assert start is None
