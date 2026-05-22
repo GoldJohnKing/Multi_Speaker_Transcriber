@@ -4,7 +4,6 @@ from __future__ import annotations
 from transcribe.data.types import (
     DiarizationResult,
     TranscriptSegment,
-    WordTimestamp,
 )
 from transcribe.models.attribution.overlap import (
     MarkOverlapHandler,
@@ -14,28 +13,28 @@ from transcribe.models.attribution.strategy import TimestampStrategy
 
 
 class AttributionEngine:
-    """Run speaker attribution on ASR word-level output.
+    """Run speaker attribution on pre-segmented subtitle lines.
 
-    Config: TimestampStrategy + MarkOverlapHandler.
+    Takes subtitle segments (from SubtitleSegmenter) and diarization
+    output, assigns a dominant speaker to each segment via interval
+    intersection voting, then marks overlap regions.
     """
 
     def __init__(
         self,
         *,
-        min_segment_duration: float = 0.2,
         overlap_handler: OverlapHandler | None = None,
     ) -> None:
-        self._strategy = TimestampStrategy(
-            min_segment_duration=min_segment_duration,
-        )
+        self._strategy = TimestampStrategy()
         self._overlap_handler = overlap_handler or MarkOverlapHandler()
 
     def run(
         self,
-        words: list[WordTimestamp],
+        segments: list[TranscriptSegment],
         diarization: DiarizationResult,
         overlap_regions: list[tuple[float, float]],
     ) -> list[TranscriptSegment]:
-        segments = self._strategy.attribute(words, diarization)
+        """Assign speakers to segments and mark overlaps."""
+        segments = self._strategy.attribute(segments, diarization)
         segments = self._overlap_handler.process(segments, overlap_regions)
         return segments
