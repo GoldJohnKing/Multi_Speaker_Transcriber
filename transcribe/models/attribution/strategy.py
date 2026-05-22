@@ -8,6 +8,11 @@ from transcribe.data.types import (
     WordTimestamp,
 )
 
+# Punctuation characters that may appear in WordTimestamp output.
+# These have interpolated timestamps and should not be independently
+# assigned to speakers — they follow the adjacent non-punctuation word.
+_PUNCT_CHARS = frozenset("，。！？,;:、；：…—!?·")
+
 
 class TimestampStrategy:
     """Attribute words to speakers via temporal overlap with diarization segments.
@@ -34,6 +39,9 @@ class TimestampStrategy:
             spk = self._assign_word(w, diarization.segments)
             assigned.append((spk, w))
 
+        # Step 1.5: Fix punctuation attribution at speaker boundaries
+        assigned = self._fix_punctuation_attribution(assigned)
+
         # Step 2: Merge consecutive same-speaker words
         merged = self._merge_consecutive(assigned)
 
@@ -45,6 +53,39 @@ class TimestampStrategy:
         final = self._final_merge(smoothed)
 
         return final
+
+    @staticmethod
+    def _fix_punctuation_attribution(
+        assigned: list[tuple[str, WordTimestamp]],
+    ) -> list[tuple[str, WordTimestamp]]:
+        """Re-assign punctuation to follow its neighboring non-punct word's speaker.
+
+        Punctuation characters have tiny interpolated timestamps (e.g. 20 ms)
+        that can place them in the wrong speaker's time range at boundaries.
+        """
+        if len(assigned) <= 1:
+            return assigned
+
+        # Find the speaker for the first non-punct word (for leading punct)
+        first_non_punct_spk = assigned[0][0]
+        for spk, w in assigned:
+            if len(w.word) != 1 or w.word not in _PUNCT_CHARS:
+                first_non_punct_spk = spk
+                break
+
+        result: list[tuple[str, WordTimestamp]] = []
+        for i, (spk, w) in enumerate(assigned):
+            if len(w.word) == 1 and w.word in _PUNCT_CHARS:
+                # Use previous non-punct word's speaker, or next if at start
+                if result:
+                    fixed_spk = result[-1][0]
+                else:
+                    # Leading punctuation — use first non-punct speaker
+                    fixed_spk = first_non_punct_spk
+                result.append((fixed_spk, w))
+            else:
+                result.append((spk, w))
+        return result
 
     def _assign_word(
         self, word: WordTimestamp, segments: list[SpeakerSegment]

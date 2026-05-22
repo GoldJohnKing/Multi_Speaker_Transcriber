@@ -179,3 +179,45 @@ class TestAttributionEngine:
         engine = AttributionEngine()
         result = engine.run(words, diarization, [])
         assert result[0].is_overlap is False
+
+
+class TestPunctuationAttribution:
+    def test_punctuation_follows_preceding_speaker(self) -> None:
+        """Punctuation at a speaker boundary follows the preceding word's speaker."""
+        words = [
+            WordTimestamp("你", 0.0, 0.2),
+            WordTimestamp("好", 0.2, 0.4),
+            WordTimestamp("。", 0.49, 0.51),  # center 0.5 → straddles boundary
+            WordTimestamp("世", 1.0, 1.2),
+            WordTimestamp("界", 1.2, 1.4),
+        ]
+        diarization = DiarizationResult(
+            segments=[
+                SpeakerSegment("SPEAKER_00", 0.0, 0.5),
+                SpeakerSegment("SPEAKER_01", 0.5, 2.0),
+            ],
+            num_speakers=2,
+        )
+        result = TimestampStrategy().attribute(words, diarization)
+        # Without fix: "。" (center=0.5) falls in SPEAKER_01 → "世界。"
+        # With fix:    "。" follows "好" → SPEAKER_00 → "你好。"
+        assert result[0].speaker_id == "SPEAKER_00"
+        assert "。" in result[0].text
+
+    def test_punctuation_at_start_follows_next_word(self) -> None:
+        """Leading punctuation follows the next non-punct word's speaker."""
+        words = [
+            WordTimestamp("。", 0.49, 0.51),
+            WordTimestamp("世", 1.0, 1.2),
+            WordTimestamp("界", 1.2, 1.4),
+        ]
+        diarization = DiarizationResult(
+            segments=[
+                SpeakerSegment("SPEAKER_00", 0.0, 0.5),
+                SpeakerSegment("SPEAKER_01", 0.5, 2.0),
+            ],
+            num_speakers=2,
+        )
+        result = TimestampStrategy().attribute(words, diarization)
+        # Leading "。" should follow next word "世" → SPEAKER_01
+        assert result[0].speaker_id == "SPEAKER_01"
