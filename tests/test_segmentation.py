@@ -260,3 +260,237 @@ class TestSegmentationEdgeCases:
         assert texts[0] == "AB"
         # Remaining segments: split via hard cut, NOT at stale index
         assert all("，" not in t for t in texts)
+
+
+# ---------------------------------------------------------------------------
+# TestSplitSentenceEnd
+# ---------------------------------------------------------------------------
+
+
+class TestSplitSentenceEnd:
+    """Pass 1: split at sentence-end punctuation, discard it, keep commas."""
+
+    def test_no_sentence_end_returns_single_group(self) -> None:
+        words = _ws([("你", 0.0, 0.5), ("好", 0.5, 1.0)])
+        seg = SubtitleSegmenter()
+        groups = seg._split_sentence_end(words)
+        assert len(groups) == 1
+        assert len(groups[0]) == 2
+
+    def test_sentence_end_creates_split(self) -> None:
+        words = _ws([("你", 0.0, 0.5), ("好", 0.5, 1.0), ("。", 1.0, 1.0), ("世", 1.0, 1.5)])
+        seg = SubtitleSegmenter()
+        groups = seg._split_sentence_end(words)
+        assert len(groups) == 2
+        assert [w.word for w in groups[0]] == ["你", "好"]
+        assert [w.word for w in groups[1]] == ["世"]
+
+    def test_comma_preserved_in_groups(self) -> None:
+        words = _ws([("你", 0.0, 0.5), ("，", 0.5, 0.5), ("好", 0.5, 1.0)])
+        seg = SubtitleSegmenter()
+        groups = seg._split_sentence_end(words)
+        assert len(groups) == 1
+        assert [w.word for w in groups[0]] == ["你", "，", "好"]
+
+    def test_empty_input(self) -> None:
+        seg = SubtitleSegmenter()
+        assert seg._split_sentence_end([]) == []
+
+
+# ---------------------------------------------------------------------------
+# TestSplitByGap
+# ---------------------------------------------------------------------------
+
+
+class TestSplitByGap:
+    """Pass 2: split at large inter-word gaps."""
+
+    def test_no_gap_returns_single_group(self) -> None:
+        words = _ws([("你", 0.0, 0.5), ("好", 0.5, 1.0), ("世", 1.0, 1.5)])
+        seg = SubtitleSegmenter()
+        groups = seg._split_by_gap(words)
+        assert len(groups) == 1
+
+    def test_hard_gap_always_splits(self) -> None:
+        """Gap > 1.0s splits unconditionally."""
+        words = _ws([
+            ("你", 0.0, 0.5), ("好", 0.5, 1.0),
+            ("世", 2.5, 3.0), ("界", 3.0, 3.5),
+        ])
+        seg = SubtitleSegmenter()
+        groups = seg._split_by_gap(words)
+        assert len(groups) == 2
+        assert [w.word for w in groups[0]] == ["你", "好"]
+        assert [w.word for w in groups[1]] == ["世", "界"]
+
+    def test_soft_gap_splits_with_min_chars(self) -> None:
+        """Gap > 0.5s splits if ≥5 content chars accumulated."""
+        words = _ws([
+            ("今", 0.0, 0.1), ("天", 0.1, 0.2), ("天", 0.2, 0.3),
+            ("气", 0.3, 0.4), ("很", 0.4, 0.5),
+            ("好", 1.1, 1.2),
+        ])
+        seg = SubtitleSegmenter(gap_soft=0.5)
+        groups = seg._split_by_gap(words)
+        assert len(groups) == 2
+
+    def test_soft_gap_no_split_below_min_chars(self) -> None:
+        """Gap > 0.5s does NOT split if <5 content chars accumulated."""
+        words = _ws([
+            ("你", 0.0, 0.1), ("好", 0.1, 0.2),
+            ("世", 0.8, 0.9), ("界", 0.9, 1.0),
+        ])
+        seg = SubtitleSegmenter(gap_soft=0.5)
+        groups = seg._split_by_gap(words)
+        assert len(groups) == 1
+
+    def test_single_word_returns_single_group(self) -> None:
+        words = _ws([("好", 0.0, 0.5)])
+        seg = SubtitleSegmenter()
+        groups = seg._split_by_gap(words)
+        assert len(groups) == 1
+
+    def test_comma_between_words_no_extra_split(self) -> None:
+        """Comma (zero-width) between words should not create a false gap."""
+        words = _ws([("你", 0.0, 0.5), ("，", 0.5, 0.5), ("好", 0.5, 1.0)])
+        seg = SubtitleSegmenter()
+        groups = seg._split_by_gap(words)
+        assert len(groups) == 1
+
+
+# ---------------------------------------------------------------------------
+# TestMergeShortGroups
+# ---------------------------------------------------------------------------
+
+
+class TestMergeShortGroups:
+    """Pass 3: merge word groups whose content duration < min_duration."""
+
+    def test_short_group_merged_with_next(self) -> None:
+        groups = [
+            _ws([("你", 0.0, 0.3)]),
+            _ws([("好", 0.3, 2.0)]),
+        ]
+        seg = SubtitleSegmenter(min_duration=0.833)
+        merged = seg._merge_short_groups(groups)
+        assert len(merged) == 1
+        assert merged[0] == groups[0] + groups[1]
+
+    def test_no_merge_when_over_max_chars(self) -> None:
+        groups = [
+            _ws([("A" * 15, 0.0, 0.3)]),
+            _ws([("B" * 15, 0.3, 2.0)]),
+        ]
+        seg = SubtitleSegmenter(max_chars=20, min_duration=0.833)
+        merged = seg._merge_short_groups(groups)
+        assert len(merged) == 2
+
+    def test_no_merge_when_over_max_duration(self) -> None:
+        groups = [
+            _ws([("A", 0.0, 0.3)]),
+            _ws([("B", 0.3, 8.0)]),
+        ]
+        seg = SubtitleSegmenter(max_duration=7.0, min_duration=0.833)
+        merged = seg._merge_short_groups(groups)
+        assert len(merged) == 2
+
+    def test_chain_of_short_groups_merged(self) -> None:
+        groups = [
+            _ws([("A", 0.0, 0.3)]),
+            _ws([("B", 0.3, 0.6)]),
+            _ws([("C", 0.6, 2.0)]),
+        ]
+        seg = SubtitleSegmenter(min_duration=0.833)
+        merged = seg._merge_short_groups(groups)
+        assert len(merged) == 1
+
+
+# ---------------------------------------------------------------------------
+# TestSplitOversized
+# ---------------------------------------------------------------------------
+
+
+class TestSplitOversized:
+    """Pass 4: split groups exceeding max_duration/max_chars at best point."""
+
+    def test_within_limits_not_split(self) -> None:
+        group = _ws([("你", 0.0, 1.0), ("好", 1.0, 2.0)])
+        seg = SubtitleSegmenter(max_chars=10, max_duration=7.0)
+        result = seg._split_oversized(group)
+        assert len(result) == 1
+
+    def test_over_duration_splits_at_comma(self) -> None:
+        """Comma position gets scoring bonus → preferred split point."""
+        group = _ws([
+            ("这", 0.0, 0.5), ("是", 0.5, 1.0),
+            ("，", 1.0, 1.0),
+            ("一", 1.0, 3.0), ("段", 3.0, 5.0), ("很", 5.0, 6.5), ("长", 6.5, 7.5),
+        ])
+        seg = SubtitleSegmenter(max_duration=7.0)
+        result = seg._split_oversized(group)
+        assert len(result) == 2
+        assert SubtitleSegmenter._content_chars(result[0]) == 2
+        assert SubtitleSegmenter._content_chars(result[1]) == 4
+
+    def test_over_chars_splits_at_midpoint_when_no_punct(self) -> None:
+        """No punctuation → split near midpoint."""
+        group = _ws([(f"w{i}", float(i) * 0.2, float(i) * 0.2 + 0.1) for i in range(30)])
+        seg = SubtitleSegmenter(max_chars=15, max_duration=999.0)
+        result = seg._split_oversized(group)
+        assert len(result) >= 2
+        for g in result:
+            assert SubtitleSegmenter._content_chars(g) <= 15
+
+    def test_recursive_split_for_very_long(self) -> None:
+        """Very long input gets split into multiple compliant groups."""
+        group = _ws([(f"c{i}", float(i) * 0.1, float(i) * 0.1 + 0.05) for i in range(60)])
+        seg = SubtitleSegmenter(max_chars=10, max_duration=999.0)
+        result = seg._split_oversized(group)
+        assert len(result) >= 5
+        for g in result:
+            assert SubtitleSegmenter._content_chars(g) <= 10
+
+    def test_single_word_not_split(self) -> None:
+        group = _ws([("好", 0.0, 8.0)])
+        seg = SubtitleSegmenter(max_duration=7.0)
+        result = seg._split_oversized(group)
+        assert len(result) == 1
+
+
+# ---------------------------------------------------------------------------
+# TestValidateCps
+# ---------------------------------------------------------------------------
+
+
+class TestValidateCps:
+    """Pass 5: re-split groups where CPS exceeds limit."""
+
+    def test_normal_cps_not_split(self) -> None:
+        groups = [_ws([("你", 0.0, 1.0), ("好", 1.0, 2.0), ("世", 2.0, 3.0)])]
+        seg = SubtitleSegmenter(max_cps=12.0)
+        result = seg._validate_cps(groups)
+        assert len(result) == 1
+
+    def test_high_cps_split(self) -> None:
+        # 12 chars in ~0.875s → CPS ≈ 13.7 > 12, triggers split.
+        # After split into two halves of 6 chars each in ~0.425s → CPS ≈ 14.1 ≤ 15.
+        words: list[tuple[str, float, float]] = []
+        for i in range(12):
+            t = i * 0.075
+            words.append((chr(65 + i), t, t + 0.05))
+        group = _ws(words)
+        seg = SubtitleSegmenter(max_cps=12.0, max_chars=20, max_duration=999.0)
+        result = seg._validate_cps([group])
+        assert len(result) >= 2
+        for g in result:
+            dur = SubtitleSegmenter._content_duration(g)
+            chars_count = SubtitleSegmenter._content_chars(g)
+            if dur > 0:
+                cps = chars_count / dur
+                assert cps <= 15.0
+
+    def test_single_word_high_cps_not_split(self) -> None:
+        group = _ws([("好", 0.0, 0.01)])
+        seg = SubtitleSegmenter(max_cps=12.0)
+        result = seg._validate_cps([group])
+        assert len(result) == 1
