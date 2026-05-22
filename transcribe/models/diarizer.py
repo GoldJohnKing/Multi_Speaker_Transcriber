@@ -201,7 +201,7 @@ class Diarizer:
             annotation = diarization_output  # pyannote 3.x
 
         # Extract overlap regions from the regular (non-exclusive) output
-        overlap_regions = self._extract_overlap_regions(diarization_output)
+        overlap_regions = self._extract_overlap_regions(diarization_output, audio.start_time)
 
         # Build speaker segments from the exclusive annotation
         segments: list[SpeakerSegment] = []
@@ -223,7 +223,7 @@ class Diarizer:
             overlap_regions=overlap_regions,
         )
 
-    def _extract_overlap_regions(self, diarization_output) -> list[tuple[float, float]]:
+    def _extract_overlap_regions(self, diarization_output, audio_start_time: float = 0.0) -> list[tuple[float, float]]:
         """Detect time regions where multiple speakers overlap."""
         # Get the regular (non-exclusive) annotation for overlap detection
         if hasattr(diarization_output, "speaker_diarization"):
@@ -240,7 +240,7 @@ class Diarizer:
                 ov_start = max(turn_a.start, turn_b.start)
                 ov_end = min(turn_a.end, turn_b.end)
                 if ov_start < ov_end:
-                    overlap_regions.append((ov_start, ov_end))
+                    overlap_regions.append((ov_start + audio_start_time, ov_end + audio_start_time))
         return overlap_regions
 
     def cleanup(self) -> None:

@@ -29,12 +29,23 @@ class MarkOverlapHandler(OverlapHandler):
         if not overlap_regions:
             return segments
 
+        result: list[TranscriptSegment] = []
         for seg in segments:
-            for ov_start, ov_end in overlap_regions:
-                if seg.start_time < ov_end and seg.end_time > ov_start:
-                    seg.is_overlap = True
-                    break
-        return segments
+            is_overlap = any(
+                seg.start_time < ov_end and seg.end_time > ov_start
+                for ov_start, ov_end in overlap_regions
+            )
+            if is_overlap:
+                result.append(TranscriptSegment(
+                    speaker_id=seg.speaker_id,
+                    start_time=seg.start_time,
+                    end_time=seg.end_time,
+                    text=seg.text,
+                    is_overlap=True,
+                ))
+            else:
+                result.append(seg)
+        return result
 
 
 class SeparateOverlapHandler(OverlapHandler):

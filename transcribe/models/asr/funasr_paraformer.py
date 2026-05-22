@@ -130,6 +130,11 @@ class FunASRParaformerTranscriber(ASRBase):
                 and len(timestamps) == len(text)
             ):
                 # Paraformer format: [[start_ms, end_ms], ...] — one entry per char
+                # Apply hotword restoration before iterating, but only if the
+                # restored text length still matches the timestamp count.
+                restored = restore_hotwords(text, self._hotword_list)
+                if len(restored) == len(timestamps):
+                    text = restored
                 for i, ts in enumerate(timestamps):
                     ch = text[i]
                     words.append(WordTimestamp(
