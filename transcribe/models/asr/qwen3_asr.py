@@ -6,7 +6,7 @@ from pathlib import Path
 
 import torch
 
-from transcribe.data.types import AudioSegment, TranscriptSegment
+from transcribe.data.types import AudioSegment, TranscriptSegment, WordTimestamp
 from transcribe.models.asr.base import ASRBase
 from transcribe.models.asr.factory import register_backend
 from transcribe.models.asr.utils import segment_by_timestamps
@@ -144,6 +144,33 @@ class Qwen3ASRTranscriber(ASRBase):
         char_ts = _align_text_to_timestamps(r.text, r.time_stamps, audio.start_time)
 
         return segment_by_timestamps(char_ts)
+
+    def transcribe_words(self, audio: AudioSegment) -> list[WordTimestamp]:
+        """Override: return character-level timestamps from ForcedAligner."""
+        results = self._model.transcribe(
+            audio=(audio.waveform, audio.sample_rate),
+            context=self._context,
+            language=self._language,
+            return_time_stamps=True,
+        )
+
+        if not results or not results[0].text:
+            return []
+
+        r = results[0]
+        if not r.time_stamps:
+            # Fallback: single word covering entire audio
+            return [WordTimestamp(
+                word=r.text,
+                start_time=audio.start_time,
+                end_time=audio.end_time,
+            )]
+
+        char_ts = _align_text_to_timestamps(r.text, r.time_stamps, audio.start_time)
+        return [
+            WordTimestamp(word=ch, start_time=s, end_time=e)
+            for ch, s, e in char_ts
+        ]
 
     def cleanup(self) -> None:
         """Release ASR + ForcedAligner from GPU/CPU memory."""
