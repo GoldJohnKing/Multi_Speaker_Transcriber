@@ -74,7 +74,7 @@ class SubtitleSegmenter:
             # Check limits after every add
             prev_len = len(buf)
             self._check_limits(buf, last_clause_idx, segments)
-            # After a clause/hard split, buf was trimmed → stale index
+            # If buf was trimmed (clause split or hard cut), the index is stale
             if len(buf) < prev_len:
                 last_clause_idx = None
 

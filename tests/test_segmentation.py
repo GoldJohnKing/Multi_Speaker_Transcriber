@@ -234,21 +234,29 @@ class TestSegmentationEdgeCases:
         assert segs[0].speaker_id == "SPEAKER_00"
 
     def test_stale_clause_idx_after_split(self) -> None:
-        """After a clause split trims buf, last_clause_idx must be reset.
+        """Regression: stale last_clause_idx must be reset after _check_limits trims buf.
 
-        Regression: stale index could cause spurious splits at positions
-        where no comma existed in the remaining buffer.
+        Sequence: A B ， C D E F G H with max_chars=6
+        1. A B → buf grows to 2 chars, no split
+        2. ， → last_clause_idx=2, comma discarded
+        3. C D E F → buf=[A,B,C,D,E,F], 6 chars → _check_limits splits at
+           last_clause_idx=2 → seg="AB", buf=[C,D,E,F]
+           After split, last_clause_idx MUST be reset to None.
+        4. G H → buf=[C,D,E,F,G,H], 6 chars → _check_limits should do a
+           HARD CUT (not clause split) because last_clause_idx is None.
+        Without the fix, last_clause_idx=2 would cause a spurious split at
+        a non-comma position (splitting C,D from E,F).
         """
-        # max_chars=4, one comma after AB, then CDEFGH triggers char limit
         words = _ws([
-            ("A", 0.0, 0.2), ("B", 0.2, 0.4),
-            ("，", 0.4, 0.5),
-            ("C", 0.5, 0.7), ("D", 0.7, 0.9), ("E", 0.9, 1.1),
-            ("F", 1.1, 1.3), ("G", 1.3, 1.5), ("H", 1.5, 1.7),
+            ("A", 0.0, 0.3), ("B", 0.3, 0.6),  # 2 chars
+            ("，", 0.6, 0.6),                    # comma
+            ("C", 0.6, 0.9), ("D", 0.9, 1.2),
+            ("E", 1.2, 1.5), ("F", 1.5, 1.8),   # +4 = 6 chars total
+            ("G", 1.8, 2.1), ("H", 2.1, 2.4),   # +2 = 6 more
         ])
-        segs = SubtitleSegmenter(max_chars=4).segment(words)
-        # First split at comma: "AB" → ok
-        # Then "CDEFGH" exceeds max_chars=4, must hard-cut (no comma in buf)
-        # Stale idx bug would incorrectly split at index 2 in remaining buf
-        for seg in segs:
-            assert "，" not in seg.text
+        segs = SubtitleSegmenter(max_chars=6, min_duration=0.1).segment(words)
+        texts = _texts(segs)
+        # First segment: AB (clause split at comma)
+        assert texts[0] == "AB"
+        # Remaining segments: split via hard cut, NOT at stale index
+        assert all("，" not in t for t in texts)
