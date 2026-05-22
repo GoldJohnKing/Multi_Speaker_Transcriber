@@ -138,11 +138,13 @@ class SubtitleSegmenter:
                 merged_dur = segments[i].end_time - prev.start_time
                 merged_chars = len(merged_text)
                 if merged_dur <= self.max_duration and merged_chars <= self.max_chars:
+                    merged_words = (prev.words or []) + (segments[i].words or [])
                     result[-1] = TranscriptSegment(
                         speaker_id=prev.speaker_id,
                         start_time=prev.start_time,
                         end_time=segments[i].end_time,
                         text=merged_text,
+                        words=merged_words or None,
                     )
                     continue
             result.append(segments[i])
@@ -160,4 +162,5 @@ class SubtitleSegmenter:
             start_time=words[0].start_time,
             end_time=words[-1].end_time,
             text=text,
+            words=list(words),
         )
