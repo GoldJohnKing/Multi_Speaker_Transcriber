@@ -199,6 +199,33 @@ class FunASRParaformerTranscriber(ASRBase):
 
         return words
 
+    @staticmethod
+    def _fallback_char_timestamps(
+        text: str,
+        timestamps: list[list[int]],
+        audio_start: float,
+    ) -> list[WordTimestamp]:
+        """Per-char interpolation fallback when exact alignment fails.
+
+        Distributes the overall time range uniformly across all characters,
+        preserving character-level granularity for downstream speaker attribution.
+        """
+        if not timestamps or not text:
+            return []
+
+        start_ms = timestamps[0][0]
+        end_ms = timestamps[-1][1]
+        total_dur = end_ms - start_ms
+        n = len(text)
+        ms_per_char = total_dur / n if n > 0 else 0.0
+
+        words: list[WordTimestamp] = []
+        for i, ch in enumerate(text):
+            s = (start_ms + i * ms_per_char) / 1000.0 + audio_start
+            e = (start_ms + (i + 1) * ms_per_char) / 1000.0 + audio_start
+            words.append(WordTimestamp(word=ch, start_time=s, end_time=e))
+        return words
+
     def transcribe_words(self, audio: AudioSegment) -> list[WordTimestamp]:
         """Override: return per-word timestamps from Paraformer ms-format output."""
         result = self._model.generate(
@@ -249,21 +276,28 @@ class FunASRParaformerTranscriber(ASRBase):
                 if aligned:
                     words.extend(aligned)
                 else:
-                    # Alignment failed — fallback to single word
-                    text = restore_hotwords(text, self._hotword_list)
-                    parsed_start, parsed_end = parse_timestamps(timestamps)
-                    if parsed_start is not None:
-                        words.append(WordTimestamp(
-                            word=text,
-                            start_time=parsed_start + audio.start_time,
-                            end_time=parsed_end + audio.start_time,
-                        ))
+                    # Exact alignment failed — per-char interpolation fallback
+                    fallback = self._fallback_char_timestamps(
+                        text, timestamps, audio.start_time,
+                    )
+                    if fallback:
+                        words.extend(fallback)
                     else:
-                        words.append(WordTimestamp(
-                            word=text,
-                            start_time=audio.start_time,
-                            end_time=audio.end_time,
-                        ))
+                        # Ultimate fallback: single word covering entire segment
+                        text = restore_hotwords(text, self._hotword_list)
+                        parsed_start, parsed_end = parse_timestamps(timestamps)
+                        if parsed_start is not None:
+                            words.append(WordTimestamp(
+                                word=text,
+                                start_time=parsed_start + audio.start_time,
+                                end_time=parsed_end + audio.start_time,
+                            ))
+                        else:
+                            words.append(WordTimestamp(
+                                word=text,
+                                start_time=audio.start_time,
+                                end_time=audio.end_time,
+                            ))
             elif timestamps:
                 # Non-char-level timestamps — fallback
                 text = restore_hotwords(text, self._hotword_list)

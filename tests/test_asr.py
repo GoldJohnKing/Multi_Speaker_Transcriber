@@ -406,3 +406,28 @@ def test_segment_preserves_time_offset() -> None:
     result = segment_by_timestamps(char_ts)
     assert result[0].start_time == pytest.approx(offset + 0.0)
     assert result[0].end_time == pytest.approx(offset + 0.5)
+
+
+class TestParaformerFallbackAlignment:
+    def test_fallback_produces_per_char_words(self) -> None:
+        """When exact alignment fails, fallback produces per-char words."""
+        from transcribe.models.asr.funasr_paraformer import FunASRParaformerTranscriber
+
+        # text has 3 non-punct chars + 1 punct = 4 chars total
+        text = "你好，世"
+        # _build_token_groups produces 3 non-punct tokens (你, 好, 世) + 1 punct (，)
+        # 3 non-punct tokens != 4 timestamps → exact alignment fails → fallback
+        timestamps = [[0, 100], [100, 200], [300, 400], [400, 500]]
+
+        # Verify the mismatch that triggers fallback
+        groups = FunASRParaformerTranscriber._build_token_groups(text)
+        non_punct = [g for g in groups if not g[1]]
+        assert len(non_punct) != len(timestamps)  # 3 != 4
+
+        # Verify fallback produces per-char words
+        fallback = FunASRParaformerTranscriber._fallback_char_timestamps(
+            text, timestamps, audio_start=0.0,
+        )
+        assert len(fallback) == len(text)  # one WordTimestamp per char
+        for w in fallback:
+            assert w.end_time > w.start_time
