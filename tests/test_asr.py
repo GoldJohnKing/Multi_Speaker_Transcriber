@@ -322,17 +322,17 @@ def test_segment_single_char() -> None:
 def test_segment_splits_at_sentence_end() -> None:
     """Segments split at sentence-ending punctuation (。！？)."""
     char_ts = [
-        ("你", 0.0, 0.2), ("好", 0.2, 0.4), ("。", 0.4, 0.5),
-        ("我", 1.0, 1.2), ("是", 1.2, 1.4), ("。", 1.4, 1.5),
+        ("你", 0.0, 0.5), ("好", 0.5, 1.0), ("。", 1.0, 1.0),
+        ("我", 2.0, 2.5), ("是", 2.5, 3.0), ("。", 3.0, 3.0),
     ]
     result = segment_by_timestamps(char_ts)
     assert len(result) == 2
-    assert result[0].text == "你好"  # punctuation discarded
+    assert result[0].text == "你好"
     assert result[0].start_time == pytest.approx(0.0)
-    assert result[0].end_time == pytest.approx(0.5)
-    assert result[1].text == "我是"  # punctuation discarded
-    assert result[1].start_time == pytest.approx(1.0)
-    assert result[1].end_time == pytest.approx(1.5)
+    assert result[0].end_time == pytest.approx(1.0)
+    assert result[1].text == "我是"
+    assert result[1].start_time == pytest.approx(2.0)
+    assert result[1].end_time == pytest.approx(3.0)
 
 
 def test_segment_max_duration_splits_at_clause() -> None:
@@ -353,9 +353,9 @@ def test_segment_max_duration_splits_at_clause() -> None:
     ]
     result = segment_by_timestamps(char_ts, max_duration=4.0)
     assert len(result) >= 2
-    # First segment should end at the clause punctuation (，at 3.3s)
-    assert result[0].end_time == pytest.approx(3.3)
-    # Second segment must start where first ended (the char after the split)
+    # First segment ends at last content word before comma (好 at 3.2s)
+    assert result[0].end_time == pytest.approx(3.2)
+    # Second segment starts at first content word after comma (我 at 3.3s)
     assert result[1].start_time == pytest.approx(3.3)
     # No gaps or overlaps between segments
     for j in range(len(result) - 1):
@@ -387,8 +387,8 @@ def test_segment_no_punctuation_long_duration() -> None:
 def test_segment_speaker_id_always_speaker_00() -> None:
     """All returned segments have speaker_id SPEAKER_00."""
     char_ts = [
-        ("你", 0.0, 0.2), ("好", 0.2, 0.4), ("。", 0.4, 0.5),
-        ("我", 1.0, 1.2), ("是", 1.2, 1.4), ("。", 1.4, 1.5),
+        ("你", 0.0, 0.5), ("好", 0.5, 1.0), ("。", 1.0, 1.0),
+        ("我", 2.0, 2.5), ("是", 2.5, 3.0), ("。", 3.0, 3.0),
     ]
     result = segment_by_timestamps(char_ts)
     for seg in result:
@@ -405,7 +405,7 @@ def test_segment_preserves_time_offset() -> None:
     ]
     result = segment_by_timestamps(char_ts)
     assert result[0].start_time == pytest.approx(offset + 0.0)
-    assert result[0].end_time == pytest.approx(offset + 0.5)
+    assert result[0].end_time == pytest.approx(offset + 0.4)  # content word end, not punctuation
 
 
 class TestParaformerFallbackAlignment:
