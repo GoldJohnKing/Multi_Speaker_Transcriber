@@ -7,7 +7,7 @@ from pathlib import Path
 import torch
 from funasr import AutoModel
 
-from transcribe.data.types import AudioSegment, TranscriptSegment
+from transcribe.data.types import AudioSegment, TranscriptSegment, WordTimestamp
 from transcribe.models.asr.base import ASRBase
 from transcribe.models.asr.factory import register_backend
 from transcribe.models.asr.utils import parse_timestamps, restore_hotwords
@@ -114,6 +114,62 @@ class FunASRNanoTranscriber(ASRBase):
             )
 
         return segments
+
+    def transcribe_words(self, audio: AudioSegment) -> list[WordTimestamp]:
+        """Override: return per-word timestamps from Nano dict-format output."""
+        waveform_tensor = torch.from_numpy(audio.waveform)
+
+        result = self._model.generate(
+            input=[waveform_tensor],
+            cache={},
+            batch_size=1,
+            language="中文",
+            itn=True,
+            hotwords=self._hotword_list,
+        )
+
+        words: list[WordTimestamp] = []
+        if not result:
+            return words
+
+        for res in result:
+            timestamps = res.get("timestamps", [])
+            if timestamps and isinstance(timestamps, list) and timestamps:
+                first = timestamps[0]
+                if isinstance(first, dict) and "text" in first:
+                    # Nano dict format: [{"text": "词", "start_time": s, "end_time": e}, ...]
+                    for ts in timestamps:
+                        word_text = ts.get("text", "")
+                        if not word_text:
+                            continue
+                        word_text = restore_hotwords(word_text, self._hotword_list)
+                        words.append(WordTimestamp(
+                            word=word_text,
+                            start_time=ts.get("start_time", 0.0) + audio.start_time,
+                            end_time=ts.get("end_time", 0.0) + audio.start_time,
+                        ))
+                    continue
+
+            # Fallback: no per-word timestamps → use full text as single word
+            text = res.get("text", "")
+            if text:
+                text = restore_hotwords(text, self._hotword_list)
+                parsed_ts = res.get("timestamps", [])
+                parsed_start, parsed_end = parse_timestamps(parsed_ts)
+                if parsed_start is not None and parsed_end is not None:
+                    words.append(WordTimestamp(
+                        word=text,
+                        start_time=parsed_start + audio.start_time,
+                        end_time=parsed_end + audio.start_time,
+                    ))
+                else:
+                    words.append(WordTimestamp(
+                        word=text,
+                        start_time=audio.start_time,
+                        end_time=audio.end_time,
+                    ))
+
+        return words
 
     def cleanup(self) -> None:
         """Release model from memory."""
