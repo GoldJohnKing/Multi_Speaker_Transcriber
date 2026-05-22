@@ -148,39 +148,64 @@ class TimestampStrategy:
     def _smooth_short_segments(
         self, segments: list[TranscriptSegment]
     ) -> list[TranscriptSegment]:
-        """Merge short interruptions between same-speaker segments."""
+        """Merge short interruptions between same-speaker segments.
+
+        Looks ahead through consecutive short segments from different speakers.
+        If the same speaker resumes after the run of short segments, the entire
+        run is absorbed into the preceding segment.
+        """
         if len(segments) < 3:
             return segments
 
+        def _is_short(s: TranscriptSegment) -> bool:
+            return (s.end_time - s.start_time) < self._min_segment_duration
+
+        def _merge_word_lists(
+            a: list[WordTimestamp] | None, b: list[WordTimestamp] | None,
+        ) -> list[WordTimestamp] | None:
+            if a is not None and b is not None:
+                return a + b
+            return None
+
         result = [segments[0]]
-        for i in range(1, len(segments)):
+        i = 1
+        while i < len(segments):
             seg = segments[i]
             prev = result[-1]
-            dur = seg.end_time - seg.start_time
 
-            # Check if this short segment is flanked by same speaker
-            if (
-                dur < self._min_segment_duration
-                and prev.speaker_id != seg.speaker_id
-            ):
-                # Look at the segment after this one in original list
-                if i + 1 < len(segments) and segments[i + 1].speaker_id == prev.speaker_id:
-                    # Merge this short segment into previous
-                    merged_words = (
-                        (prev.words or []) + (seg.words or [])
-                        if (prev.words is not None and seg.words is not None)
-                        else None
-                    )
+            if _is_short(seg) and prev.speaker_id != seg.speaker_id:
+                # Look ahead through consecutive short segments
+                j = i + 1
+                while j < len(segments):
+                    ahead = segments[j]
+                    if ahead.speaker_id == prev.speaker_id:
+                        break  # Found same speaker
+                    if not _is_short(ahead):
+                        break  # Long segment — stop
+                    j += 1
+
+                if j < len(segments) and segments[j].speaker_id == prev.speaker_id:
+                    # Merge segments[i:j+1] into prev
+                    merged_words = prev.words
+                    merged_text = prev.text
+                    merge_end = prev.end_time
+                    for k in range(i, j + 1):
+                        merged_words = _merge_word_lists(merged_words, segments[k].words)
+                        merged_text += segments[k].text
+                        merge_end = segments[k].end_time
+
                     result[-1] = TranscriptSegment(
                         speaker_id=prev.speaker_id,
                         start_time=prev.start_time,
-                        end_time=seg.end_time,
-                        text=prev.text + seg.text,
+                        end_time=merge_end,
+                        text=merged_text,
                         words=merged_words,
                     )
+                    i = j + 1
                     continue
 
             result.append(seg)
+            i += 1
 
         return result
 

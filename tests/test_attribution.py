@@ -113,6 +113,30 @@ class TestTimestampStrategySmoothing:
             assert seg.speaker_id == "SPEAKER_00"
 
 
+class TestTimestampStrategyMultiSmoothing:
+    def test_consecutive_short_interrupts_merged(self) -> None:
+        """Multiple consecutive short segments from same speaker are smoothed."""
+        words = [
+            WordTimestamp("你好", 0.0, 0.4),
+            WordTimestamp("嗯", 0.5, 0.55),     # short, SPEAKER_01
+            WordTimestamp("啊", 0.6, 0.65),     # short, SPEAKER_01
+            WordTimestamp("天气", 0.7, 1.0),    # back to SPEAKER_00
+        ]
+        diarization = DiarizationResult(
+            segments=[
+                SpeakerSegment("SPEAKER_00", 0.0, 0.45),
+                SpeakerSegment("SPEAKER_01", 0.45, 0.575),
+                SpeakerSegment("SPEAKER_01", 0.575, 0.675),
+                SpeakerSegment("SPEAKER_00", 0.675, 1.0),
+            ],
+            num_speakers=2,
+        )
+        result = TimestampStrategy(min_segment_duration=0.2).attribute(words, diarization)
+        # Both "嗯" and "啊" (< 0.2s each) should be smoothed into SPEAKER_00
+        for seg in result:
+            assert seg.speaker_id == "SPEAKER_00"
+
+
 class TestMarkOverlapHandler:
     def test_segment_in_overlap_region_marked(self) -> None:
         segments = [
