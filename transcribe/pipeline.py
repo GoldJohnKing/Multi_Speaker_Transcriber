@@ -95,7 +95,6 @@ def run_pipeline(
 
     # ── Stage 4: Speaker diarization + attribution ──────────────────
     diarization: DiarizationResult | None = None
-    overlap_regions: list[tuple[float, float]] = []
     if config.diarize:
         step += 1
         step_start = time.time()
@@ -104,16 +103,15 @@ def run_pipeline(
 
         diarizer = Diarizer(device=device, num_speakers=config.num_speakers)
         diarization = diarizer.process(audio)
-        overlap_regions = diarization.overlap_regions
         diarizer.cleanup()
 
         engine = AttributionEngine()
-        all_segments = engine.run(all_segments, diarization, overlap_regions)
+        all_segments = engine.run(all_segments, diarization)
 
         if verbose:
             console.print(
                 f"检测到 {diarization.num_speakers} 位说话人, "
-                f"{len(overlap_regions)} 个重叠区域 ... "
+                f"{len(diarization.overlap_regions)} 个重叠区域 ... "
                 f"完成 ({time.time() - step_start:.1f}s)"
             )
 
