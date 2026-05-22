@@ -192,38 +192,28 @@ class Diarizer:
 
         diarization_output = self._pipeline(input_dict, **kwargs)
 
-        # pyannote 4.0 returns a DiarizeOutput with .speaker_diarization
-        # pyannote 3.x returns an Annotation directly
-        if hasattr(diarization_output, "speaker_diarization"):
+        # pyannote 4.0: prefer exclusive output (each time → exactly 1 speaker)
+        if hasattr(diarization_output, "exclusive_speaker_diarization"):
+            annotation = diarization_output.exclusive_speaker_diarization
+        elif hasattr(diarization_output, "speaker_diarization"):
             annotation = diarization_output.speaker_diarization
         else:
-            annotation = diarization_output
+            annotation = diarization_output  # pyannote 3.x
 
+        # Extract overlap regions from the regular (non-exclusive) output
+        overlap_regions = self._extract_overlap_regions(diarization_output)
+
+        # Build speaker segments from the exclusive annotation
         segments: list[SpeakerSegment] = []
-        overlap_regions: list[tuple[float, float]] = []
         speaker_set: set[str] = set()
 
         for turn, _, speaker in annotation.itertracks(yield_label=True):
             speaker_set.add(speaker)
-            is_overlap = False
-
-            for existing in segments:
-                if (
-                    existing.speaker_id != speaker
-                    and existing.start_time < turn.end + audio.start_time
-                    and existing.end_time > turn.start + audio.start_time
-                ):
-                    is_overlap = True
-                    overlap_start = max(existing.start_time, turn.start + audio.start_time)
-                    overlap_end = min(existing.end_time, turn.end + audio.start_time)
-                    overlap_regions.append((overlap_start, overlap_end))
-
             segments.append(
                 SpeakerSegment(
                     speaker_id=speaker,
                     start_time=turn.start + audio.start_time,
                     end_time=turn.end + audio.start_time,
-                    is_overlap=is_overlap,
                 )
             )
 
@@ -232,6 +222,26 @@ class Diarizer:
             num_speakers=len(speaker_set),
             overlap_regions=overlap_regions,
         )
+
+    def _extract_overlap_regions(self, diarization_output) -> list[tuple[float, float]]:
+        """Detect time regions where multiple speakers overlap."""
+        # Get the regular (non-exclusive) annotation for overlap detection
+        if hasattr(diarization_output, "speaker_diarization"):
+            annotation = diarization_output.speaker_diarization
+        else:
+            annotation = diarization_output
+
+        overlap_regions: list[tuple[float, float]] = []
+        turns = list(annotation.itertracks(yield_label=True))
+        for i, (turn_a, _, spk_a) in enumerate(turns):
+            for turn_b, _, spk_b in turns[i + 1:]:
+                if spk_a == spk_b:
+                    continue
+                ov_start = max(turn_a.start, turn_b.start)
+                ov_end = min(turn_a.end, turn_b.end)
+                if ov_start < ov_end:
+                    overlap_regions.append((ov_start, ov_end))
+        return overlap_regions
 
     def cleanup(self) -> None:
         """Release model from memory."""
