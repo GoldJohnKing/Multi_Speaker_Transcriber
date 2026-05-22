@@ -45,21 +45,3 @@ class MarkOverlapHandler(OverlapHandler):
                 result.append(seg)
         return result
 
-
-class SeparateOverlapHandler(OverlapHandler):
-    """Phase 2 placeholder: speech separation for overlap regions.
-
-    Will use pyannote SpeechSeparation or SepFormer to separate
-    overlapping speakers, then ASR each stream independently.
-    """
-
-    def __init__(self, separator, asr_backend) -> None:
-        self._separator = separator
-        self._asr_backend = asr_backend
-
-    def process(
-        self,
-        segments: list[TranscriptSegment],
-        overlap_regions: list[tuple[float, float]],
-    ) -> list[TranscriptSegment]:
-        raise NotImplementedError("Phase 2: speech separation not yet implemented")

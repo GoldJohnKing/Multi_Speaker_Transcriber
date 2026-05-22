@@ -16,8 +16,7 @@ from transcribe.models.attribution.strategy import TimestampStrategy
 class AttributionEngine:
     """Run speaker attribution on ASR word-level output.
 
-    Phase 1 config: TimestampStrategy + MarkOverlapHandler.
-    Phase 2 config: TimestampStrategy + SeparateOverlapHandler.
+    Config: TimestampStrategy + MarkOverlapHandler.
     """
 
     def __init__(
