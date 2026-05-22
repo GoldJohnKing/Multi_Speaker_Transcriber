@@ -3,13 +3,8 @@ from __future__ import annotations
 
 import re
 
+from transcribe.constants import CLAUSE_END as _CLAUSE_END, SENTENCE_END as _SENTENCE_END
 from transcribe.data.types import TranscriptSegment
-
-# Sentence-ending punctuation — hard split, discard
-_SENTENCE_END = frozenset("。！？!?……—")
-
-# Clause-internal punctuation — soft split (duration-gated), discard
-_CLAUSE_END = frozenset("，；：,;:")
 
 # Non-split punctuation — replace with space
 _REPLACE_SPACE = frozenset("\u2018\u2019'\u00b7\u2013-")

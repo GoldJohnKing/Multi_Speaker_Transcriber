@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import re
 
+from transcribe.constants import CLAUSE_END as _CLAUSE_END, SENTENCE_END as _SENTENCE_END
+
 # Chinese punctuation characters that may be inserted between hotword chars
 _PUNC_PATTERN = r"[，。？！、；：""''（）【】《》…—· ]*"
 
@@ -103,10 +105,6 @@ def parse_timestamps(
 
 
 # --- Subtitle segmentation from character-level timestamps ---
-
-_SENTENCE_END = frozenset("。！？!?")
-_CLAUSE_END = frozenset("，；：,;:")
-
 
 def segment_by_timestamps(
     char_ts: list[tuple[str, float, float]],
