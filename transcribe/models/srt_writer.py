@@ -97,7 +97,9 @@ class SrtWriter:
         char_ends: list[float]
 
         if seg.words is not None and len(seg.words) > 0:
-            char_starts, char_ends = self._char_times_from_words(text, seg.words)
+            char_starts, char_ends = self._char_times_from_words(
+                text, seg.words, start=start, end=end,
+            )
         else:
             tpc = (end - start) / n
             char_starts = [start + i * tpc for i in range(n)]
@@ -146,10 +148,16 @@ class SrtWriter:
 
     @staticmethod
     def _char_times_from_words(
-        text: str, words: list
+        text: str, words: list, *, start: float = 0.0, end: float = 0.0,
     ) -> tuple[list[float], list[float]]:
-        """Derive per-character (start, end) from word-level timestamps."""
+        """Derive per-character (start, end) from word-level timestamps.
+
+        Falls back to uniform interpolation for characters not covered by words.
+        """
         n = len(text)
+        if n == 0:
+            return [], []
+
         char_starts = [0.0] * n
         char_ends = [0.0] * n
         offset = 0
@@ -164,6 +172,18 @@ class SrtWriter:
                     char_starts[idx] = w.start_time + dur * j / wlen
                     char_ends[idx] = w.start_time + dur * (j + 1) / wlen
             offset += wlen
+
+        # Fill uncovered trailing characters with uniform interpolation
+        if offset < n:
+            fill_start = char_ends[offset - 1] if offset > 0 else start
+            fill_end = end if end > fill_start else fill_start + 0.1
+            fill_dur = fill_end - fill_start
+            remaining = n - offset
+            tpc = fill_dur / remaining if remaining > 0 else 0.0
+            for i in range(offset, n):
+                char_starts[i] = fill_start + (i - offset) * tpc
+                char_ends[i] = fill_start + (i - offset + 1) * tpc
+
         return char_starts, char_ends
 
     # ── Pass 2: duration enforcement ───────────────────────

@@ -524,3 +524,29 @@ class TestWordTimestampAccuracy:
         ts1 = entries[1]["timestamp"]
         assert "00:00:02,400" in ts1
         assert ts1.endswith("00:00:04,000")
+
+
+class TestCharTimesFallback:
+    def test_mismatched_words_length_uses_fallback(self, tmp_path: Path) -> None:
+        """When words are shorter than text, remaining chars get interpolated time."""
+        writer = SrtWriter(speaker_label=False)
+        out = str(tmp_path / "out.srt")
+        # words cover "AB" but text is "ABCD" — C and D have no word timestamps
+        words = [
+            WordTimestamp("A", 0.0, 1.0),
+            WordTimestamp("B", 1.0, 2.0),
+        ]
+        segments = [
+            TranscriptSegment(
+                "SPEAKER_00", 0.0, 4.0, "ABCD", words=words,
+            ),
+        ]
+        writer.write(segments, out)
+        content = _read_output(out)
+        entries = _parse_srt_entries(content)
+        assert len(entries) >= 1
+        # Verify timestamps are valid (not 00:00:00,000 for end time)
+        ts = entries[0]["timestamp"]
+        assert ts.startswith("00:00:00,000 -->")
+        end_part = ts.split("-->")[1].strip()
+        assert end_part != "00:00:00,000"
