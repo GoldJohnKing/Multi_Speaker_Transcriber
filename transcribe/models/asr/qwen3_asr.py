@@ -6,13 +6,11 @@ from pathlib import Path
 
 import torch
 
+from transcribe.constants import ALIGNMENT_PUNCT as _PUNCT
 from transcribe.data.types import AudioSegment, TranscriptSegment, WordTimestamp
 from transcribe.models.asr.base import ASRBase
 from transcribe.models.asr.factory import register_backend
 from transcribe.models.asr.utils import segment_by_timestamps
-
-# Punctuation characters present in ASR text but absent from ForcedAligner timestamps.
-_PUNCT = frozenset("，。！？,;:、；：…—")
 
 
 def _align_text_to_timestamps(

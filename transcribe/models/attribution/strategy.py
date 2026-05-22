@@ -1,17 +1,13 @@
 """Timestamp-based speaker attribution strategy."""
 from __future__ import annotations
 
+from transcribe.constants import ALIGNMENT_PUNCT as _PUNCT_CHARS
 from transcribe.data.types import (
     DiarizationResult,
     SpeakerSegment,
     TranscriptSegment,
     WordTimestamp,
 )
-
-# Punctuation characters that may appear in WordTimestamp output.
-# These have interpolated timestamps and should not be independently
-# assigned to speakers — they follow the adjacent non-punctuation word.
-_PUNCT_CHARS = frozenset("，。！？,;:、；：…—!?·")
 
 
 class TimestampStrategy:
