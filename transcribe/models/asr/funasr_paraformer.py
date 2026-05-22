@@ -106,6 +106,73 @@ class FunASRParaformerTranscriber(ASRBase):
 
         return segments
 
+    def _align_char_timestamps(
+        self,
+        text: str,
+        timestamps: list[list[int]],
+        audio_start: float,
+    ) -> list[WordTimestamp]:
+        """Align text (with punctuation) to per-char timestamps (without punctuation).
+
+        Paraformer's ``text`` contains punctuation but ``timestamp`` only covers
+        non-punctuation characters.  This method strips punctuation from text to
+        verify length match, then walks both in parallel — punctuation characters
+        are emitted without timestamps (inheriting the nearest timestamp), while
+        non-punctuation characters consume the next timestamp entry.
+        """
+        # Punctuation that Paraformer adds to text but excludes from timestamps
+        _PUNC = set("，。？！、；：""''（）【】《》…—·… ")
+
+        # Count non-punctuation chars
+        non_punc_chars = [ch for ch in text if ch not in _PUNC]
+        if len(non_punc_chars) != len(timestamps):
+            return []  # Cannot align — lengths don't match even after stripping
+
+        words: list[WordTimestamp] = []
+        ts_idx = 0
+
+        # Apply hotword restoration to the punctuation-stripped text first
+        stripped = "".join(non_punc_chars)
+        restored = restore_hotwords(stripped, self._hotword_list)
+
+        # If restoration changed length, fall back to non-restored
+        if len(restored) != len(timestamps):
+            restored = stripped
+
+        # Build a mapping: position in stripped text → position in restored text
+        # They're the same length (both stripped), but content may differ
+        restored_chars = list(restored)
+
+        for ch in text:
+            if ch in _PUNC:
+                # Punctuation — inherit timestamp from last non-punct char
+                # or use the next one if this is the first char
+                if words:
+                    last = words[-1]
+                    words.append(WordTimestamp(
+                        word=ch,
+                        start_time=last.start_time,
+                        end_time=last.end_time,
+                    ))
+                elif ts_idx < len(timestamps):
+                    ts = timestamps[ts_idx]
+                    words.append(WordTimestamp(
+                        word=ch,
+                        start_time=ts[0] / 1000.0 + audio_start,
+                        end_time=ts[1] / 1000.0 + audio_start,
+                    ))
+            else:
+                if ts_idx < len(timestamps) and ts_idx < len(restored_chars):
+                    ts = timestamps[ts_idx]
+                    words.append(WordTimestamp(
+                        word=restored_chars[ts_idx],
+                        start_time=ts[0] / 1000.0 + audio_start,
+                        end_time=ts[1] / 1000.0 + audio_start,
+                    ))
+                    ts_idx += 1
+
+        return words
+
     def transcribe_words(self, audio: AudioSegment) -> list[WordTimestamp]:
         """Override: return per-word timestamps from Paraformer ms-format output."""
         result = self._model.generate(
@@ -129,9 +196,7 @@ class FunASRParaformerTranscriber(ASRBase):
                 and isinstance(timestamps[0], (list, tuple))
                 and len(timestamps) == len(text)
             ):
-                # Paraformer format: [[start_ms, end_ms], ...] — one entry per char
-                # Apply hotword restoration before iterating, but only if the
-                # restored text length still matches the timestamp count.
+                # Exact 1:1 match — text has no punctuation, use directly
                 restored = restore_hotwords(text, self._hotword_list)
                 if len(restored) == len(timestamps):
                     text = restored
@@ -142,8 +207,35 @@ class FunASRParaformerTranscriber(ASRBase):
                         start_time=ts[0] / 1000.0 + audio.start_time,
                         end_time=ts[1] / 1000.0 + audio.start_time,
                     ))
+            elif (
+                timestamps
+                and isinstance(timestamps, list)
+                and len(timestamps) > 0
+                and isinstance(timestamps[0], (list, tuple))
+                and len(timestamps) < len(text)
+            ):
+                # text has punctuation that timestamps don't cover — align them
+                aligned = self._align_char_timestamps(text, timestamps, audio.start_time)
+                if aligned:
+                    words.extend(aligned)
+                else:
+                    # Alignment failed — fallback to single word
+                    text = restore_hotwords(text, self._hotword_list)
+                    parsed_start, parsed_end = parse_timestamps(timestamps)
+                    if parsed_start is not None:
+                        words.append(WordTimestamp(
+                            word=text,
+                            start_time=parsed_start + audio.start_time,
+                            end_time=parsed_end + audio.start_time,
+                        ))
+                    else:
+                        words.append(WordTimestamp(
+                            word=text,
+                            start_time=audio.start_time,
+                            end_time=audio.end_time,
+                        ))
             elif timestamps:
-                # Timestamp count doesn't match text length — fallback
+                # Non-char-level timestamps — fallback
                 text = restore_hotwords(text, self._hotword_list)
                 parsed_start, parsed_end = parse_timestamps(timestamps)
                 if parsed_start is not None:
