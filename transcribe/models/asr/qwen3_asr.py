@@ -86,6 +86,7 @@ class Qwen3ASRTranscriber(ASRBase):
         asr_model: str = "Qwen/Qwen3-ASR-1.7B",
         aligner_model: str = "Qwen/Qwen3-ForcedAligner-0.6B",
         language: str | None = None,
+        max_new_tokens: int = 4096,
     ) -> None:
         # Deferred import — module must be importable without qwen-asr
         try:
@@ -110,7 +111,7 @@ class Qwen3ASRTranscriber(ASRBase):
             forced_aligner=aligner_model,
             forced_aligner_kwargs=dict(dtype=dtype, device_map=device_map),
             max_inference_batch_size=32,
-            max_new_tokens=256,
+            max_new_tokens=max_new_tokens,
         )
 
     @property
