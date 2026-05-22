@@ -136,10 +136,11 @@ class FunASRNanoTranscriber(ASRBase):
             timestamps = res.get("timestamps", [])
             if timestamps and isinstance(timestamps, list) and timestamps:
                 first = timestamps[0]
-                if isinstance(first, dict) and "text" in first:
-                    # Nano dict format: [{"text": "词", "start_time": s, "end_time": e}, ...]
+                if isinstance(first, dict) and ("text" in first or "token" in first):
+                    # Nano dict format: [{"token": "字", "start_time": s, "end_time": e}, ...]
+                    # Some versions use "text", others use "token"
                     for ts in timestamps:
-                        word_text = ts.get("text", "")
+                        word_text = ts.get("text") or ts.get("token", "")
                         if not word_text:
                             continue
                         word_text = restore_hotwords(word_text, self._hotword_list)
