@@ -49,6 +49,7 @@ def _words_to_segments(
             start_time=b[0].start_time,
             end_time=b[-1].end_time,
             text="".join(w.word for w in b),
+            words=list(b),
         )
 
     for w in words[1:]:

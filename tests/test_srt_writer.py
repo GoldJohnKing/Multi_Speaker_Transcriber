@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from transcribe.data.types import TranscriptSegment
+from transcribe.data.types import TranscriptSegment, WordTimestamp
 from transcribe.models.srt_writer import (
     _CLAUSE_END,
     _REPLACE_SPACE,
@@ -267,8 +267,8 @@ class TestDurationEnforcement:
 
 
 class TestOverlapMarking:
-    def test_overlap_prefix(self, tmp_path: Path) -> None:
-        """is_overlap=True adds [重叠] prefix."""
+    def test_overlap_no_prefix(self, tmp_path: Path) -> None:
+        """is_overlap=True no longer adds [重叠] prefix."""
         writer = SrtWriter(speaker_label=False)
         out = str(tmp_path / "out.srt")
         segments = [
@@ -276,7 +276,8 @@ class TestOverlapMarking:
         ]
         writer.write(segments, out)
         content = _read_output(out)
-        assert "[重叠] 你好" in content
+        assert "[重叠]" not in content
+        assert "你好" in content
 
     def test_no_overlap_prefix(self, tmp_path: Path) -> None:
         """is_overlap=False does NOT add [重叠] prefix."""
@@ -290,7 +291,7 @@ class TestOverlapMarking:
         assert "[重叠]" not in content
 
     def test_overlap_with_speaker_label(self, tmp_path: Path) -> None:
-        """Both [重叠] and speaker label appear for overlapping segments."""
+        """Overlap segments show speaker label only, no [重叠] prefix."""
         writer = SrtWriter(speaker_label=True)
         out = str(tmp_path / "out.srt")
         segments = [
@@ -298,7 +299,8 @@ class TestOverlapMarking:
         ]
         writer.write(segments, out)
         content = _read_output(out)
-        assert "[说话人1] [重叠] 你好" in content
+        assert "[说话人1] 你好" in content
+        assert "[重叠]" not in content
 
 
 # ------------------------------------------------------------------
@@ -461,3 +463,64 @@ class TestWriteBasic:
         assert lines[0] == "1"
         assert lines[3] == "2"
         assert lines[6] == "3"
+
+
+# ------------------------------------------------------------------
+# Word-level timestamp accuracy
+# ------------------------------------------------------------------
+
+
+class TestWordTimestampAccuracy:
+    def test_split_uses_word_timestamps(self, tmp_path: Path) -> None:
+        """When words are provided, split timestamps match word boundaries."""
+        writer = SrtWriter(speaker_label=False)
+        out = str(tmp_path / "out.srt")
+        # Text "AB，CD" — split at comma (clause end)
+        # A: 0.0-1.0, B: 1.0-2.0, C: 5.0-6.0, D: 6.0-7.0
+        # Uniform interpolation would give: AB → 0.0-2.33, CD → 2.33-7.0 (WRONG)
+        # Word timestamps should give: AB → 0.0-2.0, CD → 5.0-7.0 (CORRECT)
+        words = [
+            WordTimestamp("A", 0.0, 1.0),
+            WordTimestamp("B", 1.0, 2.0),
+            WordTimestamp("，", 2.0, 5.0),
+            WordTimestamp("C", 5.0, 6.0),
+            WordTimestamp("D", 6.0, 7.0),
+        ]
+        segments = [
+            TranscriptSegment(
+                "SPEAKER_00", 0.0, 7.0, "AB，CD", words=words,
+            ),
+        ]
+        writer.write(segments, out)
+        content = _read_output(out)
+        entries = _parse_srt_entries(content)
+        assert len(entries) == 2
+        # First chunk "AB": start=0.0, end should be ~2.0 (end of word B)
+        ts0 = entries[0]["timestamp"]
+        assert ts0.startswith("00:00:00,000 -->")
+        assert "00:00:02,000" in ts0
+        # Second chunk "CD": start should be ~5.0 (start of word C), end=7.0
+        ts1 = entries[1]["timestamp"]
+        assert "00:00:05,000" in ts1
+        assert ts1.endswith("00:00:07,000")
+
+    def test_no_words_falls_back_to_uniform(self, tmp_path: Path) -> None:
+        """Without words, uniform interpolation is used (backward compat)."""
+        writer = SrtWriter(speaker_label=False)
+        out = str(tmp_path / "out.srt")
+        segments = [
+            TranscriptSegment("SPEAKER_00", 0.0, 4.0, "AB，CD"),
+        ]
+        writer.write(segments, out)
+        content = _read_output(out)
+        entries = _parse_srt_entries(content)
+        assert len(entries) == 2
+        # Uniform: 5 chars total (A B ， C D), tpc = 4.0/5 = 0.8
+        # Comma at index 2 → AB ends at char_ends[1] = 1.6s
+        ts0 = entries[0]["timestamp"]
+        assert ts0.startswith("00:00:00,000 -->")
+        assert "00:00:01,600" in ts0
+        # CD starts at char_starts[3] = 2.4s
+        ts1 = entries[1]["timestamp"]
+        assert "00:00:02,400" in ts1
+        assert ts1.endswith("00:00:04,000")

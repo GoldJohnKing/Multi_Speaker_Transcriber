@@ -125,11 +125,17 @@ class TimestampStrategy:
                 # Look at the segment after this one in original list
                 if i + 1 < len(segments) and segments[i + 1].speaker_id == prev.speaker_id:
                     # Merge this short segment into previous
+                    merged_words = (
+                        (prev.words or []) + (seg.words or [])
+                        if (prev.words is not None and seg.words is not None)
+                        else None
+                    )
                     result[-1] = TranscriptSegment(
                         speaker_id=prev.speaker_id,
                         start_time=prev.start_time,
                         end_time=seg.end_time,
                         text=prev.text + seg.text,
+                        words=merged_words,
                     )
                     continue
 
@@ -153,11 +159,17 @@ class TimestampStrategy:
         for seg in segments[1:]:
             prev = result[-1]
             if seg.speaker_id == prev.speaker_id:
+                merged_words = (
+                    (prev.words or []) + (seg.words or [])
+                    if (prev.words is not None and seg.words is not None)
+                    else None
+                )
                 result[-1] = TranscriptSegment(
                     speaker_id=prev.speaker_id,
                     start_time=prev.start_time,
                     end_time=seg.end_time,
                     text=prev.text + seg.text,
+                    words=merged_words,
                 )
             else:
                 result.append(seg)
@@ -172,4 +184,5 @@ class TimestampStrategy:
             start_time=words[0].start_time,
             end_time=words[-1].end_time,
             text="".join(w.word for w in words),
+            words=list(words),
         )

@@ -62,12 +62,18 @@ class SrtWriter:
                 and seg.is_overlap == last.is_overlap
                 and (seg.start_time - last.end_time) < self.merge_gap
             ):
+                merged_words = (
+                    (last.words or []) + (seg.words or [])
+                    if (last.words is not None and seg.words is not None)
+                    else None
+                )
                 merged[-1] = TranscriptSegment(
                     speaker_id=last.speaker_id,
                     start_time=last.start_time,
                     end_time=max(last.end_time, seg.end_time),
                     text=last.text + seg.text,
                     is_overlap=last.is_overlap,
+                    words=merged_words,
                 )
             else:
                 merged.append(seg)
@@ -80,10 +86,9 @@ class SrtWriter:
     ) -> list[tuple[str, float, float, bool]]:
         """Single-pass: split at punctuation, clean other punctuation → spaces.
 
-        Uses uniform time-per-char interpolation for subtitle timing.
-        This is accurate enough for subtitle display since the actual
-        word-level timestamps are already used for speaker attribution
-        upstream (TimestampStrategy).
+        When ``seg.words`` is available, uses per-character timestamps derived
+        from the original word-level timing for accurate subtitle timestamps.
+        Falls back to uniform time-per-char interpolation otherwise.
         """
         text = seg.text
         start = seg.start_time
@@ -92,7 +97,16 @@ class SrtWriter:
         if n == 0:
             return []
 
-        time_per_char = (end - start) / n
+        # Build per-character (start_time, end_time) arrays
+        char_starts: list[float]
+        char_ends: list[float]
+
+        if seg.words is not None and len(seg.words) > 0:
+            char_starts, char_ends = self._char_times_from_words(text, seg.words)
+        else:
+            tpc = (end - start) / n
+            char_starts = [start + i * tpc for i in range(n)]
+            char_ends = [start + (i + 1) * tpc for i in range(n)]
 
         chunks: list[tuple[str, float, float, bool]] = []
         buf: list[str] = []
@@ -105,8 +119,8 @@ class SrtWriter:
                     if cleaned:
                         chunks.append((
                             cleaned,
-                            start + buf_start_idx * time_per_char,
-                            start + i * time_per_char,
+                            char_starts[buf_start_idx],
+                            char_ends[i - 1] if i > 0 else char_ends[0],
                             True,
                         ))
                     buf = []
@@ -117,8 +131,8 @@ class SrtWriter:
                     if cleaned:
                         chunks.append((
                             cleaned,
-                            start + buf_start_idx * time_per_char,
-                            start + i * time_per_char,
+                            char_starts[buf_start_idx],
+                            char_ends[i - 1] if i > 0 else char_ends[0],
                             False,
                         ))
                     buf = []
@@ -131,9 +145,31 @@ class SrtWriter:
         if buf:
             cleaned = _collapse_spaces("".join(buf))
             if cleaned:
-                chunks.append((cleaned, start + buf_start_idx * time_per_char, end, True))
+                chunks.append((cleaned, char_starts[buf_start_idx], end, True))
 
         return chunks
+
+    @staticmethod
+    def _char_times_from_words(
+        text: str, words: list
+    ) -> tuple[list[float], list[float]]:
+        """Derive per-character (start, end) from word-level timestamps."""
+        n = len(text)
+        char_starts = [0.0] * n
+        char_ends = [0.0] * n
+        offset = 0
+        for w in words:
+            wlen = len(w.word)
+            if wlen == 0:
+                continue
+            dur = w.end_time - w.start_time
+            for j in range(wlen):
+                idx = offset + j
+                if idx < n:
+                    char_starts[idx] = w.start_time + dur * j / wlen
+                    char_ends[idx] = w.start_time + dur * (j + 1) / wlen
+            offset += wlen
+        return char_starts, char_ends
 
     # ── Pass 2: duration enforcement ───────────────────────
 
@@ -201,8 +237,6 @@ class SrtWriter:
         lines: list[str] = []
         for idx, seg in enumerate(segments, start=1):
             text = seg.text
-            if seg.is_overlap:
-                text = f"[重叠] {text}"
             if self.speaker_label:
                 display_id = (
                     speaker_name_map.get(seg.speaker_id, seg.speaker_id)

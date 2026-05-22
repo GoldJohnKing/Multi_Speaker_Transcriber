@@ -53,6 +53,7 @@ class TranscriptSegment:
     end_time: float
     text: str  # with punctuation
     is_overlap: bool = False
+    words: list[WordTimestamp] | None = None  # original word-level timestamps
 
 
 @dataclass
