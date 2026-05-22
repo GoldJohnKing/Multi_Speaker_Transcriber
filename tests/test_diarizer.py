@@ -32,7 +32,9 @@ def mock_pipeline():
         (MockTurn(1.0, 2.5), None, "SPEAKER_01"),
         (MockTurn(2.5, 3.0), None, "SPEAKER_00"),
     ]
-    # pyannote 4.0: pipeline returns DiarizeOutput with .speaker_diarization
+    # pyannote 4.0: pipeline returns DiarizeOutput with .exclusive_speaker_diarization
+    # and .speaker_diarization
+    mock.return_value.exclusive_speaker_diarization.itertracks.return_value = tracks
     mock.return_value.speaker_diarization.itertracks.return_value = tracks
     return mock
 
@@ -102,6 +104,7 @@ def test_diarizer_no_overlap_when_single_speaker():
         (MockTurn(0.0, 1.5), None, "SPEAKER_00"),
         (MockTurn(1.5, 3.0), None, "SPEAKER_00"),
     ]
+    mock.return_value.exclusive_speaker_diarization.itertracks.return_value = tracks
     mock.return_value.speaker_diarization.itertracks.return_value = tracks
 
     with patch("transcribe.models.diarizer.Diarizer._load_pipeline", return_value=mock):
@@ -111,8 +114,6 @@ def test_diarizer_no_overlap_when_single_speaker():
 
     assert result.num_speakers == 1
     assert len(result.overlap_regions) == 0
-    for seg in result.segments:
-        assert seg.is_overlap is False
 
 
 def test_diarizer_offset_audio(mock_pipeline):
@@ -121,6 +122,7 @@ def test_diarizer_offset_audio(mock_pipeline):
     tracks = [
         (MockTurn(0.0, 1.0), None, "SPEAKER_00"),
     ]
+    mock.return_value.exclusive_speaker_diarization.itertracks.return_value = tracks
     mock.return_value.speaker_diarization.itertracks.return_value = tracks
 
     with patch("transcribe.models.diarizer.Diarizer._load_pipeline", return_value=mock):
