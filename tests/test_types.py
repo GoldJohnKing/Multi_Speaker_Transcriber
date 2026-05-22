@@ -11,6 +11,7 @@ from transcribe.data.types import (
     PipelineConfig,
     SpeakerSegment,
     TranscriptSegment,
+    WordTimestamp,
 )
 
 
@@ -168,3 +169,34 @@ class TestPipelineConfig:
         assert cfg.language == "en"
         assert cfg.cache_dir == "/tmp/cache"
         assert cfg.num_speakers == 3
+
+
+# ---------------------------------------------------------------------------
+# TranscriptSegment is_overlap
+# ---------------------------------------------------------------------------
+
+class TestTranscriptSegmentIsOverlap:
+    def test_default_false(self) -> None:
+        seg = TranscriptSegment("SPEAKER_00", 0.0, 1.0, "hello")
+        assert seg.is_overlap is False
+
+    def test_explicit_true(self) -> None:
+        seg = TranscriptSegment("SPEAKER_00", 0.0, 1.0, "hello", is_overlap=True)
+        assert seg.is_overlap is True
+
+    def test_backward_compat_positional_args(self) -> None:
+        """Existing code passing 4 positional args still works."""
+        seg = TranscriptSegment("SPEAKER_00", 0.0, 1.0, "hello")
+        assert seg.is_overlap is False
+
+
+# ---------------------------------------------------------------------------
+# WordTimestamp
+# ---------------------------------------------------------------------------
+
+class TestWordTimestamp:
+    def test_creation(self) -> None:
+        wt = WordTimestamp(word="你好", start_time=0.0, end_time=0.5)
+        assert wt.word == "你好"
+        assert wt.start_time == 0.0
+        assert wt.end_time == 0.5

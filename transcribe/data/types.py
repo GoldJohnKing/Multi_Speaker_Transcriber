@@ -52,6 +52,16 @@ class TranscriptSegment:
     start_time: float
     end_time: float
     text: str  # with punctuation
+    is_overlap: bool = False
+
+
+@dataclass
+class WordTimestamp:
+    """Word-level timestamp for speaker attribution."""
+
+    word: str
+    start_time: float  # seconds, relative to original audio
+    end_time: float
 
 
 @dataclass
