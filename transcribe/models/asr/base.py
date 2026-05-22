@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
-from transcribe.data.types import AudioSegment, TranscriptSegment
+from transcribe.data.types import AudioSegment, TranscriptSegment, WordTimestamp
 
 
 class ASRBase(ABC):
@@ -24,6 +24,18 @@ class ASRBase(ABC):
     def transcribe(self, audio: AudioSegment) -> list[TranscriptSegment]:
         """Transcribe audio to text segments with timestamps."""
         ...
+
+    def transcribe_words(self, audio: AudioSegment) -> list[WordTimestamp]:
+        """Return word-level timestamps.
+
+        Default implementation derives from transcribe() output.
+        Subclasses should override for finer granularity.
+        """
+        segments = self.transcribe(audio)
+        return [
+            WordTimestamp(word=seg.text, start_time=seg.start_time, end_time=seg.end_time)
+            for seg in segments
+        ]
 
     @abstractmethod
     def cleanup(self) -> None:

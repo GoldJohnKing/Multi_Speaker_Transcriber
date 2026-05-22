@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from transcribe.data.types import AudioSegment, TranscriptSegment
+from transcribe.data.types import AudioSegment, TranscriptSegment, WordTimestamp
 from transcribe.models.asr import create_asr, list_backends, restore_hotwords, parse_timestamps
 from transcribe.models.asr.utils import segment_by_timestamps
 from transcribe.models.asr.base import ASRBase
@@ -141,6 +141,35 @@ def test_paraformer_load_hotwords_missing_file() -> None:
     transcriber = FunASRParaformerTranscriber(device="cpu", hotword_path="/nonexistent/path.txt")
     assert transcriber._hotwords is None
     assert transcriber._hotword_list == []
+
+
+def test_default_transcribe_words():
+    """Default transcribe_words() derives WordTimestamp from transcribe()."""
+
+    class MockASR(ASRBase):
+        def __init__(self, device="cpu", hotword_path=None, **kwargs):
+            pass
+
+        def transcribe(self, audio):
+            return [
+                TranscriptSegment("SPEAKER_00", 0.0, 1.0, "你好"),
+                TranscriptSegment("SPEAKER_00", 1.5, 2.5, "世界"),
+            ]
+
+        def cleanup(self):
+            pass
+
+    mock = MockASR()
+    audio = AudioSegment(
+        waveform=np.zeros(16000, dtype=np.float32),
+        sample_rate=16000, start_time=0.0, end_time=1.0,
+    )
+    words = mock.transcribe_words(audio)
+    assert len(words) == 2
+    assert words[0].word == "你好"
+    assert words[0].start_time == pytest.approx(0.0)
+    assert words[1].word == "世界"
+    assert words[1].end_time == pytest.approx(2.5)
 
 
 # --- Hotword punctuation restoration tests (pure function, no model needed) ---
