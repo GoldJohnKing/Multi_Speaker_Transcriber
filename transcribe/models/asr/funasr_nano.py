@@ -143,6 +143,9 @@ class FunASRNanoTranscriber(ASRBase):
                         word_text = ts.get("text") or ts.get("token", "")
                         if not word_text:
                             continue
+                        # Note: restore_hotwords on single-char tokens is a no-op for
+                        # multi-char hotwords (single chars can't have punctuation inside
+                        # them). Full hotword restoration is handled in transcribe().
                         word_text = restore_hotwords(word_text, self._hotword_list)
                         words.append(WordTimestamp(
                             word=word_text,

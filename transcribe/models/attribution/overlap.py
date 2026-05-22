@@ -32,8 +32,11 @@ class MarkOverlapHandler(OverlapHandler):
 
         result: list[TranscriptSegment] = []
         for seg in segments:
+            # Use center-point check instead of "any intersection"
+            # to avoid marking entire long segments for brief touches
+            center = (seg.start_time + seg.end_time) / 2.0
             is_overlap = any(
-                seg.start_time < ov_end and seg.end_time > ov_start
+                ov_start <= center < ov_end
                 for ov_start, ov_end in overlap_regions
             )
             if is_overlap:

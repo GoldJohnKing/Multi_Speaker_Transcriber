@@ -144,6 +144,8 @@ def run_pipeline(
     if diarization is not None:
         engine = AttributionEngine()
         all_segments = engine.run(words, diarization, overlap_regions)
+        if verbose:
+            console.print(f"  说话人归属: {len(all_segments)} 个分段")
     else:
         all_segments = _words_to_segments(words)
 

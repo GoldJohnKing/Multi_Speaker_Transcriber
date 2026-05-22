@@ -156,13 +156,22 @@ class TestMarkOverlapHandler:
         assert result[0].is_overlap is False
 
     def test_partial_overlap(self) -> None:
-        """Segment partially overlapping with overlap region is marked."""
+        """Segment whose center is in an overlap region is marked."""
         segments = [
-            TranscriptSegment("SPEAKER_00", 1.8, 3.0, "你好"),
+            TranscriptSegment("SPEAKER_00", 1.0, 3.0, "你好"),  # center=2.0
         ]
-        overlap_regions = [(1.0, 2.0)]
+        overlap_regions = [(1.5, 2.5)]
         result = MarkOverlapHandler().process(segments, overlap_regions)
         assert result[0].is_overlap is True
+
+    def test_edge_touch_not_marked(self) -> None:
+        """Segment only touching overlap edge is NOT marked (center outside)."""
+        segments = [
+            TranscriptSegment("SPEAKER_00", 1.8, 3.0, "你好"),  # center=2.4
+        ]
+        overlap_regions = [(1.0, 2.0)]  # center 2.4 is outside [1.0, 2.0)
+        result = MarkOverlapHandler().process(segments, overlap_regions)
+        assert result[0].is_overlap is False
 
 
 class TestAttributionEngine:
@@ -188,7 +197,7 @@ class TestAttributionEngine:
         assert len(result) == 2
         assert result[0].speaker_id == "SPEAKER_00"
         assert result[0].text == "你好"
-        assert result[0].is_overlap is True  # overlaps with (0.3, 0.5)
+        assert result[0].is_overlap is False  # center 0.2 outside [0.3, 0.5)
         assert result[1].speaker_id == "SPEAKER_01"
         assert result[1].text == "世界"
         assert result[1].is_overlap is False
