@@ -6,7 +6,13 @@ import pytest
 from transcribe.data.types import (
     DiarizationResult,
     SpeakerSegment,
+    TranscriptSegment,
     WordTimestamp,
+)
+from transcribe.models.attribution.engine import AttributionEngine
+from transcribe.models.attribution.overlap import (
+    MarkOverlapHandler,
+    OverlapHandler,
 )
 from transcribe.models.attribution.strategy import TimestampStrategy
 
@@ -105,3 +111,71 @@ class TestTimestampStrategySmoothing:
         # "嗯" (0.1s < 0.2s) should be smoothed into surrounding SPEAKER_00
         for seg in result:
             assert seg.speaker_id == "SPEAKER_00"
+
+
+class TestMarkOverlapHandler:
+    def test_segment_in_overlap_region_marked(self) -> None:
+        segments = [
+            TranscriptSegment("SPEAKER_00", 1.0, 2.0, "你好"),
+            TranscriptSegment("SPEAKER_01", 3.0, 4.0, "世界"),
+        ]
+        overlap_regions = [(0.5, 2.5)]
+        result = MarkOverlapHandler().process(segments, overlap_regions)
+        assert result[0].is_overlap is True
+        assert result[1].is_overlap is False
+
+    def test_no_overlap_regions(self) -> None:
+        segments = [
+            TranscriptSegment("SPEAKER_00", 0.0, 1.0, "你好"),
+        ]
+        result = MarkOverlapHandler().process(segments, [])
+        assert result[0].is_overlap is False
+
+    def test_partial_overlap(self) -> None:
+        """Segment partially overlapping with overlap region is marked."""
+        segments = [
+            TranscriptSegment("SPEAKER_00", 1.8, 3.0, "你好"),
+        ]
+        overlap_regions = [(1.0, 2.0)]
+        result = MarkOverlapHandler().process(segments, overlap_regions)
+        assert result[0].is_overlap is True
+
+
+class TestAttributionEngine:
+    def test_full_attribution_flow(self) -> None:
+        """End-to-end: words + diarization + overlap → attributed segments."""
+        words = [
+            WordTimestamp("你", 0.0, 0.2),
+            WordTimestamp("好", 0.2, 0.4),
+            WordTimestamp("世", 1.0, 1.2),
+            WordTimestamp("界", 1.2, 1.4),
+        ]
+        diarization = DiarizationResult(
+            segments=[
+                SpeakerSegment("SPEAKER_00", 0.0, 0.8),
+                SpeakerSegment("SPEAKER_01", 0.8, 2.0),
+            ],
+            num_speakers=2,
+            overlap_regions=[(0.3, 0.5)],
+        )
+        engine = AttributionEngine()
+        result = engine.run(words, diarization, diarization.overlap_regions)
+
+        assert len(result) == 2
+        assert result[0].speaker_id == "SPEAKER_00"
+        assert result[0].text == "你好"
+        assert result[0].is_overlap is True  # overlaps with (0.3, 0.5)
+        assert result[1].speaker_id == "SPEAKER_01"
+        assert result[1].text == "世界"
+        assert result[1].is_overlap is False
+
+    def test_no_overlap_regions(self) -> None:
+        words = [WordTimestamp("你好", 0.0, 0.5)]
+        diarization = DiarizationResult(
+            segments=[SpeakerSegment("SPEAKER_00", 0.0, 1.0)],
+            num_speakers=1,
+            overlap_regions=[],
+        )
+        engine = AttributionEngine()
+        result = engine.run(words, diarization, [])
+        assert result[0].is_overlap is False
