@@ -106,6 +106,41 @@ class FunASRParaformerTranscriber(ASRBase):
 
         return segments
 
+    @staticmethod
+    def _build_token_groups(text: str) -> list[tuple[str, bool]]:
+        """Group text characters into alignment tokens.
+
+        Returns list of (token_text, is_punctuation) tuples where:
+        - CJK characters → individual tokens (1 char each)
+        - ASCII runs (English words/numbers) → single consolidated token
+        - Punctuation → individual tokens
+
+        This matches Paraformer's timestamp granularity: CJK chars get one
+        timestamp each, but English words like "npc" share a single timestamp.
+        """
+        _PUNC = CHINESE_PUNCTUATION
+        groups: list[tuple[str, bool]] = []
+        ascii_buf: list[str] = []
+
+        def _flush_ascii() -> None:
+            nonlocal ascii_buf
+            if ascii_buf:
+                groups.append(("".join(ascii_buf), False))
+                ascii_buf = []
+
+        for ch in text:
+            if ch in _PUNC:
+                _flush_ascii()
+                groups.append((ch, True))
+            elif ord(ch) < 128:  # ASCII (English, digits, etc.)
+                ascii_buf.append(ch)
+            else:  # CJK or other non-ASCII, non-punctuation
+                _flush_ascii()
+                groups.append((ch, False))
+
+        _flush_ascii()
+        return groups
+
     def _align_char_timestamps(
         self,
         text: str,
@@ -115,58 +150,48 @@ class FunASRParaformerTranscriber(ASRBase):
         """Align text (with punctuation) to per-char timestamps (without punctuation).
 
         Paraformer's ``text`` contains punctuation but ``timestamp`` only covers
-        non-punctuation characters.  This method strips punctuation from text to
-        verify length match, then walks both in parallel — punctuation characters
-        are emitted without timestamps (inheriting the nearest timestamp), while
-        non-punctuation characters consume the next timestamp entry.
-        """
-        # Punctuation that Paraformer adds to text but excludes from timestamps
-        # Shared with utils.restore_hotwords — kept in sync via CHINESE_PUNCTUATION
-        _PUNC = CHINESE_PUNCTUATION
+        non-punctuation characters. Additionally, consecutive ASCII characters
+        (e.g. "npc") share a single timestamp entry.
 
-        # Count non-punctuation chars
-        non_punc_chars = [ch for ch in text if ch not in _PUNC]
-        if len(non_punc_chars) != len(timestamps):
-            return []  # Cannot align — lengths don't match even after stripping
+        This method:
+        1. Groups text into tokens (CJK=1 char, ASCII runs=1 token, punctuation=1)
+        2. Verifies non-punctuation token count matches timestamp count
+        3. Walks groups and timestamps in parallel
+        """
+        groups = self._build_token_groups(text)
+
+        # Count non-punctuation tokens and verify against timestamps
+        non_punc_tokens = [(t, p) for t, p in groups if not p]
+        if len(non_punc_tokens) != len(timestamps):
+            return []  # Cannot align — still mismatched after consolidation
 
         words: list[WordTimestamp] = []
         ts_idx = 0
 
-        # Apply hotword restoration to the punctuation-stripped text first
-        stripped = "".join(non_punc_chars)
-        restored = restore_hotwords(stripped, self._hotword_list)
-
-        # If restoration changed length, fall back to non-restored
-        if len(restored) != len(timestamps):
-            restored = stripped
-
-        # Build a mapping: position in stripped text → position in restored text
-        # They're the same length (both stripped), but content may differ
-        restored_chars = list(restored)
-
-        for ch in text:
-            if ch in _PUNC:
-                # Punctuation — inherit timestamp from last non-punct char
-                # or use the next one if this is the first char
+        for token_text, is_punc in groups:
+            if is_punc:
+                # Punctuation — inherit timestamp from last non-punct word
                 if words:
                     last = words[-1]
                     words.append(WordTimestamp(
-                        word=ch,
+                        word=token_text,
                         start_time=last.start_time,
                         end_time=last.end_time,
                     ))
                 elif ts_idx < len(timestamps):
                     ts = timestamps[ts_idx]
                     words.append(WordTimestamp(
-                        word=ch,
+                        word=token_text,
                         start_time=ts[0] / 1000.0 + audio_start,
                         end_time=ts[1] / 1000.0 + audio_start,
                     ))
             else:
-                if ts_idx < len(timestamps) and ts_idx < len(restored_chars):
+                if ts_idx < len(timestamps):
                     ts = timestamps[ts_idx]
+                    # Apply hotword restoration to individual tokens
+                    restored_token = restore_hotwords(token_text, self._hotword_list)
                     words.append(WordTimestamp(
-                        word=restored_chars[ts_idx],
+                        word=restored_token,
                         start_time=ts[0] / 1000.0 + audio_start,
                         end_time=ts[1] / 1000.0 + audio_start,
                     ))
