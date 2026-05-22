@@ -117,7 +117,7 @@ def test_transcribe_with_mocked_model() -> None:
     assert len(result) == 1
     assert result[0].text == "你好"  # sentence-end 。 discarded
     assert result[0].start_time == pytest.approx(1.0)
-    assert result[0].end_time == pytest.approx(1.42)  # 1.0 + 0.4 + 0.02 (punc interp)
+    assert result[0].end_time == pytest.approx(1.4)  # content word end (1.0 + 0.4)
 
 
 def test_transcribe_empty_result() -> None:
@@ -269,10 +269,10 @@ def test_transcribe_multi_sentence_preserves_punctuation() -> None:
     mock_result = TS(
         text="你好。我是。",
         time_stamps=[
-            TS(text="你", start_time=0.0, end_time=0.2),
-            TS(text="好", start_time=0.2, end_time=0.4),
-            TS(text="我", start_time=1.0, end_time=1.2),
-            TS(text="是", start_time=1.2, end_time=1.4),
+            TS(text="你", start_time=0.0, end_time=0.5),
+            TS(text="好", start_time=0.5, end_time=1.0),
+            TS(text="我", start_time=2.0, end_time=2.5),
+            TS(text="是", start_time=2.5, end_time=3.0),
         ],
     )
     instance._model = types.SimpleNamespace(
@@ -280,16 +280,16 @@ def test_transcribe_multi_sentence_preserves_punctuation() -> None:
     )
 
     audio = AudioSegment(
-        waveform=np.zeros(32000, dtype=np.float32),
+        waveform=np.zeros(48000, dtype=np.float32),
         sample_rate=16000,
         start_time=0.0,
-        end_time=2.0,
+        end_time=3.0,
     )
     result = instance.transcribe(audio)
     assert len(result) == 2
     assert result[0].text == "你好"  # 。 discarded
     assert result[1].text == "我是"  # 。 discarded
     assert result[0].start_time == pytest.approx(0.0)
-    assert result[0].end_time == pytest.approx(0.42)  # 0.4 + 0.02 (punc interp)
-    assert result[1].start_time == pytest.approx(1.0)
-    assert result[1].end_time == pytest.approx(1.42)  # 1.4 + 0.02 (punc interp)
+    assert result[0].end_time == pytest.approx(1.0)  # content word end
+    assert result[1].start_time == pytest.approx(2.0)
+    assert result[1].end_time == pytest.approx(3.0)  # content word end
