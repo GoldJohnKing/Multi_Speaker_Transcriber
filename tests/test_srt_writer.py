@@ -54,53 +54,6 @@ class TestSpeakerLabel:
         assert SrtWriter._speaker_label("unknown") == "unknown"
 
 
-class TestMergeAdjacent:
-    def test_merge_same_speaker_small_gap(self, tmp_path: Path) -> None:
-        writer = SrtWriter(speaker_label=False, merge_gap=0.5)
-        out = str(tmp_path / "out.srt")
-        segments = [
-            TranscriptSegment("SPEAKER_00", 0.0, 2.0, "你好"),
-            TranscriptSegment("SPEAKER_00", 2.3, 4.0, "世界"),
-        ]
-        writer.write(segments, out)
-        content = _read_output(out)
-        assert "你好世界" in content
-        assert "00:00:00,000 --> 00:00:04,000" in content
-
-    def test_no_merge_different_speaker(self, tmp_path: Path) -> None:
-        writer = SrtWriter(speaker_label=False, merge_gap=0.5)
-        out = str(tmp_path / "out.srt")
-        segments = [
-            TranscriptSegment("SPEAKER_00", 0.0, 2.0, "你好"),
-            TranscriptSegment("SPEAKER_01", 2.1, 4.0, "世界"),
-        ]
-        writer.write(segments, out)
-        entries = _parse_srt_entries(_read_output(out))
-        assert len(entries) == 2
-
-    def test_no_merge_large_gap(self, tmp_path: Path) -> None:
-        writer = SrtWriter(speaker_label=False, merge_gap=0.5)
-        out = str(tmp_path / "out.srt")
-        segments = [
-            TranscriptSegment("SPEAKER_00", 0.0, 2.0, "你好"),
-            TranscriptSegment("SPEAKER_00", 5.0, 7.0, "世界"),
-        ]
-        writer.write(segments, out)
-        entries = _parse_srt_entries(_read_output(out))
-        assert len(entries) == 2
-
-    def test_no_merge_different_overlap(self, tmp_path: Path) -> None:
-        writer = SrtWriter(speaker_label=False, merge_gap=0.5)
-        out = str(tmp_path / "out.srt")
-        segments = [
-            TranscriptSegment("SPEAKER_00", 0.0, 2.0, "你好", is_overlap=False),
-            TranscriptSegment("SPEAKER_00", 2.1, 4.0, "世界", is_overlap=True),
-        ]
-        writer.write(segments, out)
-        entries = _parse_srt_entries(_read_output(out))
-        assert len(entries) == 2
-
-
 class TestWriteBasic:
     def test_basic_srt_with_speaker_labels(self, tmp_path: Path) -> None:
         writer = SrtWriter(speaker_label=True)

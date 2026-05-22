@@ -12,10 +12,8 @@ class SrtWriter:
     def __init__(
         self,
         speaker_label: bool = True,
-        merge_gap: float = 0.5,
     ) -> None:
         self.speaker_label = speaker_label
-        self.merge_gap = merge_gap
 
     def write(
         self,
@@ -25,9 +23,8 @@ class SrtWriter:
     ) -> None:
         """Write segments to an SRT file.
 
-        Segments are sorted by time, adjacent same-speaker segments
-        within merge_gap are merged, then written directly.
-        SubtitleSegmenter is responsible for all splitting upstream.
+        Segments are sorted by time and written directly.
+        SubtitleSegmenter is responsible for all splitting and merging upstream.
         """
         if not segments:
             with open(output_path, "w", encoding="utf-8") as f:
@@ -35,33 +32,7 @@ class SrtWriter:
             return
 
         sorted_segments = sorted(segments, key=lambda s: s.start_time)
-        merged = self._merge_adjacent(sorted_segments)
-        self._write_file(merged, output_path, speaker_name_map)
-
-    def _merge_adjacent(
-        self, segments: list[TranscriptSegment]
-    ) -> list[TranscriptSegment]:
-        """Merge adjacent same-speaker segments if gap < merge_gap."""
-        if not segments:
-            return []
-        merged: list[TranscriptSegment] = [segments[0]]
-        for seg in segments[1:]:
-            last = merged[-1]
-            if (
-                seg.speaker_id == last.speaker_id
-                and seg.is_overlap == last.is_overlap
-                and (seg.start_time - last.end_time) < self.merge_gap
-            ):
-                merged[-1] = TranscriptSegment(
-                    speaker_id=last.speaker_id,
-                    start_time=last.start_time,
-                    end_time=max(last.end_time, seg.end_time),
-                    text=last.text + seg.text,
-                    is_overlap=last.is_overlap,
-                )
-            else:
-                merged.append(seg)
-        return merged
+        self._write_file(sorted_segments, output_path, speaker_name_map)
 
     def _write_file(
         self,
