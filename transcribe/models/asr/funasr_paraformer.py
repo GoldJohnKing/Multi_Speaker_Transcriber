@@ -10,7 +10,7 @@ from funasr import AutoModel
 from transcribe.data.types import AudioSegment, TranscriptSegment, WordTimestamp
 from transcribe.models.asr.base import ASRBase
 from transcribe.models.asr.factory import register_backend
-from transcribe.models.asr.utils import parse_timestamps, restore_hotwords
+from transcribe.models.asr.utils import CHINESE_PUNCTUATION, parse_timestamps, restore_hotwords
 
 
 class FunASRParaformerTranscriber(ASRBase):
@@ -121,7 +121,8 @@ class FunASRParaformerTranscriber(ASRBase):
         non-punctuation characters consume the next timestamp entry.
         """
         # Punctuation that Paraformer adds to text but excludes from timestamps
-        _PUNC = set("，。？！、；：""''（）【】《》…—·… ")
+        # Shared with utils.restore_hotwords — kept in sync via CHINESE_PUNCTUATION
+        _PUNC = CHINESE_PUNCTUATION
 
         # Count non-punctuation chars
         non_punc_chars = [ch for ch in text if ch not in _PUNC]
@@ -214,7 +215,11 @@ class FunASRParaformerTranscriber(ASRBase):
                 and isinstance(timestamps[0], (list, tuple))
                 and len(timestamps) < len(text)
             ):
-                # text has punctuation that timestamps don't cover — align them
+                # text has punctuation that timestamps don't cover — align them.
+                # Assumption: len(timestamps) < len(text) is caused by ct-punc
+                # adding punctuation to text that is absent from the timestamp
+                # array. If timestamps are corrupted or a different format,
+                # alignment will fail and fall through to single-word fallback.
                 aligned = self._align_char_timestamps(text, timestamps, audio.start_time)
                 if aligned:
                     words.extend(aligned)

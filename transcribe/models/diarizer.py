@@ -231,7 +231,7 @@ class Diarizer:
         else:
             annotation = diarization_output
 
-        overlap_regions: list[tuple[float, float]] = []
+        raw_overlaps: list[tuple[float, float]] = []
         turns = list(annotation.itertracks(yield_label=True))
         for i, (turn_a, _, spk_a) in enumerate(turns):
             for turn_b, _, spk_b in turns[i + 1:]:
@@ -240,8 +240,27 @@ class Diarizer:
                 ov_start = max(turn_a.start, turn_b.start)
                 ov_end = min(turn_a.end, turn_b.end)
                 if ov_start < ov_end:
-                    overlap_regions.append((ov_start + audio_start_time, ov_end + audio_start_time))
-        return overlap_regions
+                    raw_overlaps.append((ov_start + audio_start_time, ov_end + audio_start_time))
+
+        # Merge overlapping/adjacent overlap regions
+        return self._merge_intervals(raw_overlaps)
+
+    @staticmethod
+    def _merge_intervals(
+        intervals: list[tuple[float, float]],
+    ) -> list[tuple[float, float]]:
+        """Merge overlapping or adjacent time intervals."""
+        if not intervals:
+            return []
+        sorted_intervals = sorted(intervals, key=lambda x: x[0])
+        merged: list[tuple[float, float]] = [sorted_intervals[0]]
+        for start, end in sorted_intervals[1:]:
+            prev_start, prev_end = merged[-1]
+            if start <= prev_end:
+                merged[-1] = (prev_start, max(prev_end, end))
+            else:
+                merged.append((start, end))
+        return merged
 
     def cleanup(self) -> None:
         """Release model from memory."""

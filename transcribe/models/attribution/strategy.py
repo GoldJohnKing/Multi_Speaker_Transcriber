@@ -12,9 +12,9 @@ from transcribe.data.types import (
 class TimestampStrategy:
     """Attribute words to speakers via temporal overlap with diarization segments.
 
-    Uses exclusive_speaker_diarization (each time point belongs to exactly
-    one speaker). For each word, finds which diarization segment contains
-    the word's center time point.
+    For each word, finds which diarization segment contains the word's center
+    time point. Uses exclusive diarization output (each time point belongs to
+    exactly one speaker).
     """
 
     def __init__(self, *, min_segment_duration: float = 0.2) -> None:
@@ -40,16 +40,32 @@ class TimestampStrategy:
         # Step 3: Smooth short interruptions
         smoothed = self._smooth_short_segments(merged)
 
-        return smoothed
+        # Step 4: Re-merge consecutive same-speaker segments that smoothing
+        # may have produced (e.g. [A+B, A] → [A+B+A])
+        final = self._final_merge(smoothed)
+
+        return final
 
     def _assign_word(
         self, word: WordTimestamp, segments: list[SpeakerSegment]
     ) -> str:
-        """Find which diarization segment contains the word's center."""
+        """Find which diarization segment contains the word's center.
+
+        Uses two-pointer scan since both words and diarization segments
+        are time-ordered. O(n + m) instead of O(n · m).
+        """
+        if not segments:
+            return "SPEAKER_00"
+
         center = (word.start_time + word.end_time) / 2.0
+
+        # Two-pointer: advance through segments to find the one containing center
         for seg in segments:
             if seg.start_time <= center < seg.end_time:
                 return seg.speaker_id
+            if seg.start_time > center:
+                break
+
         return self._nearest_speaker(center, segments)
 
     def _nearest_speaker(
@@ -119,6 +135,32 @@ class TimestampStrategy:
 
             result.append(seg)
 
+        return result
+
+    def _final_merge(
+        self, segments: list[TranscriptSegment]
+    ) -> list[TranscriptSegment]:
+        """Re-merge consecutive same-speaker segments after smoothing.
+
+        Smoothing can leave adjacent same-speaker segments (e.g. when a short
+        segment B is absorbed into preceding A, but the following A segment
+        remains separate). This pass collapses such runs.
+        """
+        if len(segments) < 2:
+            return segments
+
+        result = [segments[0]]
+        for seg in segments[1:]:
+            prev = result[-1]
+            if seg.speaker_id == prev.speaker_id:
+                result[-1] = TranscriptSegment(
+                    speaker_id=prev.speaker_id,
+                    start_time=prev.start_time,
+                    end_time=seg.end_time,
+                    text=prev.text + seg.text,
+                )
+            else:
+                result.append(seg)
         return result
 
     @staticmethod

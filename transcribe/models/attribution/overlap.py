@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from dataclasses import replace
 
 from transcribe.data.types import TranscriptSegment
 
@@ -36,13 +37,7 @@ class MarkOverlapHandler(OverlapHandler):
                 for ov_start, ov_end in overlap_regions
             )
             if is_overlap:
-                result.append(TranscriptSegment(
-                    speaker_id=seg.speaker_id,
-                    start_time=seg.start_time,
-                    end_time=seg.end_time,
-                    text=seg.text,
-                    is_overlap=True,
-                ))
+                result.append(replace(seg, is_overlap=True))
             else:
                 result.append(seg)
         return result

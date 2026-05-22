@@ -14,9 +14,6 @@ _CLAUSE_END = frozenset("，；：,;:")
 # Non-split punctuation — replace with space
 _REPLACE_SPACE = frozenset("\u2018\u2019'\u00b7\u2013-")
 
-# All punctuation that gets some form of processing
-_ALL_HANDLED = _SENTENCE_END | _CLAUSE_END | _REPLACE_SPACE
-
 
 def _collapse_spaces(text: str) -> str:
     """Collapse consecutive spaces, strip edges."""
@@ -27,12 +24,10 @@ class SrtWriter:
     def __init__(
         self,
         speaker_label: bool = True,
-        max_chars_per_line: int = 20,
         min_split_duration: float = 1.0,
         merge_gap: float = 0.5,
     ) -> None:
         self.speaker_label = speaker_label
-        self.max_chars_per_line = max_chars_per_line
         self.min_split_duration = min_split_duration
         self.merge_gap = merge_gap
 
@@ -83,7 +78,13 @@ class SrtWriter:
     def _split_and_clean(
         self, seg: TranscriptSegment
     ) -> list[tuple[str, float, float, bool]]:
-        """Single-pass: split at punctuation, clean other punctuation → spaces."""
+        """Single-pass: split at punctuation, clean other punctuation → spaces.
+
+        Uses uniform time-per-char interpolation for subtitle timing.
+        This is accurate enough for subtitle display since the actual
+        word-level timestamps are already used for speaker attribution
+        upstream (TimestampStrategy).
+        """
         text = seg.text
         start = seg.start_time
         end = seg.end_time

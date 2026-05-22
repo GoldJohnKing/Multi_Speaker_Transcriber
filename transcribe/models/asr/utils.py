@@ -7,6 +7,11 @@ import re
 # Chinese punctuation characters that may be inserted between hotword chars
 _PUNC_PATTERN = r"[，。？！、；：""''（）【】《》…—· ]*"
 
+# Shared set of punctuation characters that ASR models may add to text
+# but exclude from timestamp arrays (e.g., Paraformer's ct-punc output).
+# Used by restore_hotwords() and Paraformer's _align_char_timestamps().
+CHINESE_PUNCTUATION = frozenset("，。？！、；：""''（）【】《》…—· ")
+
 
 def restore_hotwords(text: str, hotword_list: list[str]) -> str:
     """Remove punctuation inserted inside hotword terms.

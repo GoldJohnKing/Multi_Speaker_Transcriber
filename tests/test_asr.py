@@ -143,17 +143,19 @@ def test_paraformer_load_hotwords_missing_file() -> None:
     assert transcriber._hotword_list == []
 
 
-def test_default_transcribe_words():
-    """Default transcribe_words() derives WordTimestamp from transcribe()."""
+def test_default_transcribe():
+    """Default transcribe() derives TranscriptSegment from transcribe_words()."""
 
     class MockASR(ASRBase):
         def __init__(self, device="cpu", hotword_path=None, **kwargs):
             pass
 
-        def transcribe(self, audio):
+        def transcribe_words(self, audio):
             return [
-                TranscriptSegment("SPEAKER_00", 0.0, 1.0, "你好"),
-                TranscriptSegment("SPEAKER_00", 1.5, 2.5, "世界"),
+                WordTimestamp(word="你好", start_time=0.0, end_time=1.0),
+                WordTimestamp(word="世", start_time=1.0, end_time=1.2),
+                WordTimestamp(word="界", start_time=1.2, end_time=1.5),
+                WordTimestamp(word="测试", start_time=2.5, end_time=3.5),
             ]
 
         def cleanup(self):
@@ -164,12 +166,15 @@ def test_default_transcribe_words():
         waveform=np.zeros(16000, dtype=np.float32),
         sample_rate=16000, start_time=0.0, end_time=1.0,
     )
-    words = mock.transcribe_words(audio)
-    assert len(words) == 2
-    assert words[0].word == "你好"
-    assert words[0].start_time == pytest.approx(0.0)
-    assert words[1].word == "世界"
-    assert words[1].end_time == pytest.approx(2.5)
+    segments = mock.transcribe(audio)
+    # "你好" + "世界" are < 0.5s gap → merged into one segment
+    # "测试" is > 0.5s gap from "界" → separate segment
+    assert len(segments) == 2
+    assert segments[0].text == "你好世界"
+    assert segments[0].start_time == pytest.approx(0.0)
+    assert segments[0].end_time == pytest.approx(1.5)
+    assert segments[1].text == "测试"
+    assert segments[1].start_time == pytest.approx(2.5)
 
 
 # --- Hotword punctuation restoration tests (pure function, no model needed) ---

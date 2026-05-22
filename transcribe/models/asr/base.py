@@ -10,32 +10,56 @@ from transcribe.data.types import AudioSegment, TranscriptSegment, WordTimestamp
 class ASRBase(ABC):
     """Unified interface for all ASR backends.
 
-    Subclasses must implement ``__init__``, ``transcribe``, and ``cleanup``.
-    The ``__init__`` signature must accept ``device`` and ``hotword_path``
-    as the first two positional arguments (after ``self``), with backend-specific
-    parameters passed via ``**kwargs``.
+    Subclasses must implement ``__init__``, ``transcribe_words``, and
+    ``cleanup``.  The ``__init__`` signature must accept ``device`` and
+    ``hotword_path`` as the first two positional arguments (after ``self``),
+    with backend-specific parameters passed via ``**kwargs``.
     """
 
     @abstractmethod
     def __init__(self, device: str, hotword_path: str | None, **kwargs) -> None:
         ...
 
-    @abstractmethod
     def transcribe(self, audio: AudioSegment) -> list[TranscriptSegment]:
-        """Transcribe audio to text segments with timestamps."""
-        ...
+        """Transcribe audio to text segments with timestamps.
 
-    def transcribe_words(self, audio: AudioSegment) -> list[WordTimestamp]:
-        """Return word-level timestamps.
-
-        Default implementation derives from transcribe() output.
-        Subclasses should override for finer granularity.
+        Default implementation derives from ``transcribe_words()`` output.
+        Subclasses may override if they need segment-level logic.
         """
-        segments = self.transcribe(audio)
-        return [
-            WordTimestamp(word=seg.text, start_time=seg.start_time, end_time=seg.end_time)
-            for seg in segments
-        ]
+        words = self.transcribe_words(audio)
+        if not words:
+            return []
+
+        segments: list[TranscriptSegment] = []
+        buf = [words[0]]
+
+        for w in words[1:]:
+            # Merge words into segments at natural boundaries (gaps > 0.5s)
+            if w.start_time - buf[-1].end_time > 0.5:
+                segments.append(TranscriptSegment(
+                    speaker_id="SPEAKER_00",
+                    start_time=buf[0].start_time,
+                    end_time=buf[-1].end_time,
+                    text="".join(ww.word for ww in buf),
+                ))
+                buf = [w]
+            else:
+                buf.append(w)
+
+        if buf:
+            segments.append(TranscriptSegment(
+                speaker_id="SPEAKER_00",
+                start_time=buf[0].start_time,
+                end_time=buf[-1].end_time,
+                text="".join(ww.word for ww in buf),
+            ))
+
+        return segments
+
+    @abstractmethod
+    def transcribe_words(self, audio: AudioSegment) -> list[WordTimestamp]:
+        """Return word-level timestamps. Subclasses must implement."""
+        ...
 
     @abstractmethod
     def cleanup(self) -> None:
