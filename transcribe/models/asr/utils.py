@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import re
 
-from transcribe.constants import CLAUSE_END as _CLAUSE_END, SENTENCE_END as _SENTENCE_END
-
 # Chinese punctuation characters that may be inserted between hotword chars
 _PUNC_PATTERN = r"[，。？！、；：""''（）【】《》…—· ]*"
 
@@ -106,6 +104,7 @@ def parse_timestamps(
 
 # --- Subtitle segmentation from character-level timestamps ---
 
+
 def segment_by_timestamps(
     char_ts: list[tuple[str, float, float]],
     max_duration: float = 7.0,
@@ -113,12 +112,7 @@ def segment_by_timestamps(
 ) -> list[TranscriptSegment]:
     """Split character-level timestamps into subtitle-grade segments.
 
-    Hybrid strategy:
-    1. Split at sentence-ending punctuation (。！？), discarding the punctuation.
-    2. When accumulated duration exceeds *max_duration*, split at the
-       nearest preceding clause punctuation (，；：).
-    3. When no clause punctuation is found, hard-cut at *max_duration*.
-    4. When accumulated characters exceed *max_chars*, hard-cut (fallback).
+    Delegates to :class:`SubtitleSegmenter` for the actual segmentation.
 
     Args:
         char_ts: ``[(text, start_sec, end_sec), ...]`` character-level timestamps.
@@ -126,77 +120,17 @@ def segment_by_timestamps(
         max_chars: Maximum characters per subtitle segment.
 
     Returns:
-        List of :class:`TranscriptSegment`.  Sentence-ending punctuation
-        (。！？!?) is consumed as split points but **not** included in output text.
+        List of :class:`TranscriptSegment`.
     """
     if not char_ts:
         return []
 
-    from transcribe.data.types import TranscriptSegment
+    from transcribe.data.types import WordTimestamp
+    from transcribe.models.segmentation import SubtitleSegmenter
 
-    def _flush(buf: list[str], s: float, e: float) -> TranscriptSegment:
-        return TranscriptSegment(
-            speaker_id="SPEAKER_00",
-            start_time=s,
-            end_time=e,
-            text="".join(buf),
-        )
-
-    segments: list[TranscriptSegment] = []
-    buf_text: list[str] = []
-    buf_start: float = char_ts[0][1]
-    last_clause_idx: int | None = None  # index into buf_text
-
-    for i, (text, start, end) in enumerate(char_ts):
-
-        # Flush at sentence-ending punctuation — punctuation is discarded
-        if text in _SENTENCE_END:
-            if buf_text:
-                segments.append(_flush(buf_text, buf_start, end))
-            buf_text = []
-            buf_start = char_ts[i + 1][1] if i + 1 < len(char_ts) else end
-            last_clause_idx = None
-            continue
-
-        buf_text.append(text)
-
-        # Track clause punctuation positions for fallback splitting
-        if text in _CLAUSE_END:
-            last_clause_idx = len(buf_text) - 1
-
-        duration = end - buf_start
-        char_count = len(buf_text)
-
-        # Max duration exceeded — try splitting at clause punctuation
-        if duration > max_duration and last_clause_idx is not None and last_clause_idx > 0:
-            before = buf_text[: last_clause_idx + 1]
-            after = buf_text[last_clause_idx + 1 :]
-            before_end = char_ts[i - len(after)][2]
-
-            segments.append(_flush(before, buf_start, before_end))
-            buf_text = after
-            buf_start = char_ts[i - len(after) + 1][1]
-            last_clause_idx = None
-            continue
-
-        # Max duration exceeded with no clause punctuation — hard cut
-        if duration > max_duration and len(buf_text) > 1:
-            segments.append(_flush(buf_text, buf_start, end))
-            buf_text = []
-            buf_start = char_ts[i + 1][1] if i + 1 < len(char_ts) else end
-            last_clause_idx = None
-            continue
-
-        # Max chars exceeded — hard cut
-        if char_count >= max_chars:
-            segments.append(_flush(buf_text, buf_start, end))
-            buf_text = []
-            buf_start = char_ts[i + 1][1] if i + 1 < len(char_ts) else end
-            last_clause_idx = None
-            continue
-
-    # Flush remaining buffer
-    if buf_text:
-        segments.append(_flush(buf_text, buf_start, char_ts[-1][2]))
-
-    return segments
+    words = [
+        WordTimestamp(word=text, start_time=start, end_time=end)
+        for text, start, end in char_ts
+    ]
+    segmenter = SubtitleSegmenter(max_duration=max_duration, max_chars=max_chars)
+    return segmenter.segment(words)
