@@ -8,17 +8,15 @@ from rich.console import Console
 
 from transcribe.config import load_config, resolve_device
 from transcribe.data.types import (
-    AudioSegment,
     DiarizationResult,
     PipelineConfig,
-    TranscriptSegment,
-    WordTimestamp,
 )
 from transcribe.models.audio_extractor import AudioExtractor
 from transcribe.models.asr import create_asr
 from transcribe.models.attribution import AttributionEngine
 from transcribe.models.diarizer import Diarizer
 from transcribe.models.matcher import SpeakerMatcher
+from transcribe.models.segmentation import SubtitleSegmenter
 from transcribe.models.srt_writer import SrtWriter
 
 console = Console()
@@ -28,42 +26,6 @@ _ASR_SAMPLE_RATE = 16_000
 
 def _default_output_path(input_path: str) -> str:
     return str(Path(input_path).with_suffix(".srt"))
-
-
-def _words_to_segments(
-    words: list[WordTimestamp],
-    *,
-    max_gap: float = 1.0,
-    max_duration: float = 7.0,
-) -> list[TranscriptSegment]:
-    """Convert word timestamps to subtitle segments (no-diarize mode)."""
-    if not words:
-        return []
-
-    segments: list[TranscriptSegment] = []
-    buf = [words[0]]
-
-    def _flush(b: list[WordTimestamp]) -> TranscriptSegment:
-        return TranscriptSegment(
-            speaker_id="SPEAKER_00",
-            start_time=b[0].start_time,
-            end_time=b[-1].end_time,
-            text="".join(w.word for w in b),
-            words=list(b),
-        )
-
-    for w in words[1:]:
-        buf_dur = buf[-1].end_time - buf[0].start_time
-        if w.start_time - buf[-1].end_time > max_gap or buf_dur >= max_duration:
-            segments.append(_flush(buf))
-            buf = [w]
-        else:
-            buf.append(w)
-
-    if buf:
-        segments.append(_flush(buf))
-
-    return segments
 
 
 def run_pipeline(
@@ -90,7 +52,7 @@ def run_pipeline(
     output = output_path or _default_output_path(input_path)
     total_start = time.time()
 
-    total_stages = 3 + (1 if config.diarize else 0)
+    total_stages = 4 + (1 if config.diarize else 0)
     step = 0
 
     if verbose:
@@ -121,33 +83,39 @@ def run_pipeline(
     if verbose:
         console.print(f"识别 {len(words)} 个词 ... 完成 ({time.time() - step_start:.1f}s)")
 
-    # ── Stage 3: Speaker diarization ────────────────────────────────
+    # ── Stage 3: Subtitle segmentation ──────────────────────────────
+    step += 1
+    step_start = time.time()
+    if verbose:
+        console.print(f"[{step}/{total_stages}] 字幕分割 ...", end=" ")
+    segmenter = SubtitleSegmenter()
+    all_segments = segmenter.segment(words)
+    if verbose:
+        console.print(f"{len(all_segments)} 条字幕 ... 完成 ({time.time() - step_start:.1f}s)")
+
+    # ── Stage 4: Speaker diarization + attribution ──────────────────
     diarization: DiarizationResult | None = None
     overlap_regions: list[tuple[float, float]] = []
     if config.diarize:
         step += 1
         step_start = time.time()
         if verbose:
-            console.print(f"[{step}/{total_stages}] 说话人识别 ...", end=" ")
+            console.print(f"[{step}/{total_stages}] 说话人识别 + 归因 ...", end=" ")
+
         diarizer = Diarizer(device=device, num_speakers=config.num_speakers)
         diarization = diarizer.process(audio)
         overlap_regions = diarization.overlap_regions
         diarizer.cleanup()
+
+        engine = AttributionEngine()
+        all_segments = engine.run(all_segments, diarization, overlap_regions)
+
         if verbose:
             console.print(
                 f"检测到 {diarization.num_speakers} 位说话人, "
                 f"{len(overlap_regions)} 个重叠区域 ... "
                 f"完成 ({time.time() - step_start:.1f}s)"
             )
-
-    # ── Stage 4: Speaker attribution ────────────────────────────────
-    if diarization is not None:
-        engine = AttributionEngine()
-        all_segments = engine.run(words, diarization, overlap_regions)
-        if verbose:
-            console.print(f"  说话人归属: {len(all_segments)} 个分段")
-    else:
-        all_segments = _words_to_segments(words)
 
     # ── Stage 5: Speaker reference matching ─────────────────────────
     speaker_name_map: dict[str, str] = {}
