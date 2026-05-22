@@ -72,9 +72,10 @@ class SubtitleSegmenter:
             buf.append(_word)
 
             # Check limits after every add
+            prev_len = len(buf)
             self._check_limits(buf, last_clause_idx, segments)
-            # After a hard cut, buf is reset; update last_clause_idx tracking
-            if buf and last_clause_idx is not None and last_clause_idx >= len(buf):
+            # After a clause/hard split, buf was trimmed → stale index
+            if len(buf) < prev_len:
                 last_clause_idx = None
 
         # Flush remaining buffer

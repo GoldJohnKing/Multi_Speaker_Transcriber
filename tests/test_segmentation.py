@@ -232,3 +232,23 @@ class TestSegmentationEdgeCases:
         words = _ws([("你", 0.0, 0.5), ("好", 0.5, 1.0)])
         segs = SubtitleSegmenter().segment(words)
         assert segs[0].speaker_id == "SPEAKER_00"
+
+    def test_stale_clause_idx_after_split(self) -> None:
+        """After a clause split trims buf, last_clause_idx must be reset.
+
+        Regression: stale index could cause spurious splits at positions
+        where no comma existed in the remaining buffer.
+        """
+        # max_chars=4, one comma after AB, then CDEFGH triggers char limit
+        words = _ws([
+            ("A", 0.0, 0.2), ("B", 0.2, 0.4),
+            ("，", 0.4, 0.5),
+            ("C", 0.5, 0.7), ("D", 0.7, 0.9), ("E", 0.9, 1.1),
+            ("F", 1.1, 1.3), ("G", 1.3, 1.5), ("H", 1.5, 1.7),
+        ])
+        segs = SubtitleSegmenter(max_chars=4).segment(words)
+        # First split at comma: "AB" → ok
+        # Then "CDEFGH" exceeds max_chars=4, must hard-cut (no comma in buf)
+        # Stale idx bug would incorrectly split at index 2 in remaining buf
+        for seg in segs:
+            assert "，" not in seg.text
