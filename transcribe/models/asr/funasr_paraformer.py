@@ -7,7 +7,7 @@ from pathlib import Path
 import torch
 from funasr import AutoModel
 
-from transcribe.data.types import AudioSegment, TranscriptSegment
+from transcribe.data.types import AudioSegment, TranscriptSegment, WordTimestamp
 from transcribe.models.asr.base import ASRBase
 from transcribe.models.asr.factory import register_backend
 from transcribe.models.asr.utils import parse_timestamps, restore_hotwords
@@ -105,6 +105,63 @@ class FunASRParaformerTranscriber(ASRBase):
             )
 
         return segments
+
+    def transcribe_words(self, audio: AudioSegment) -> list[WordTimestamp]:
+        """Override: return per-word timestamps from Paraformer ms-format output."""
+        result = self._model.generate(
+            input=audio.waveform,
+            batch_size_s=300,
+            hotword=self._hotwords,
+        )
+
+        words: list[WordTimestamp] = []
+        if not result:
+            return words
+
+        for res in result:
+            text = res.get("text", "")
+            timestamps = res.get("timestamp", [])
+
+            if (
+                timestamps
+                and isinstance(timestamps, list)
+                and len(timestamps) > 0
+                and isinstance(timestamps[0], (list, tuple))
+                and len(timestamps) == len(text)
+            ):
+                # Paraformer format: [[start_ms, end_ms], ...] — one entry per char
+                for i, ts in enumerate(timestamps):
+                    ch = text[i]
+                    words.append(WordTimestamp(
+                        word=ch,
+                        start_time=ts[0] / 1000.0 + audio.start_time,
+                        end_time=ts[1] / 1000.0 + audio.start_time,
+                    ))
+            elif timestamps:
+                # Timestamp count doesn't match text length — fallback
+                text = restore_hotwords(text, self._hotword_list)
+                parsed_start, parsed_end = parse_timestamps(timestamps)
+                if parsed_start is not None:
+                    words.append(WordTimestamp(
+                        word=text,
+                        start_time=parsed_start + audio.start_time,
+                        end_time=parsed_end + audio.start_time,
+                    ))
+                else:
+                    words.append(WordTimestamp(
+                        word=text,
+                        start_time=audio.start_time,
+                        end_time=audio.end_time,
+                    ))
+            elif text:
+                text = restore_hotwords(text, self._hotword_list)
+                words.append(WordTimestamp(
+                    word=text,
+                    start_time=audio.start_time,
+                    end_time=audio.end_time,
+                ))
+
+        return words
 
     def cleanup(self) -> None:
         """Release model from memory."""
