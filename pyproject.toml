@@ -38,9 +38,14 @@ diarize = [
     "simplejson",
 ]
 
+# ─── Speech Separation (requires diarize) ───
+separate = [
+    "pyannote.audio[separation]>=4.0.4",
+]
+
 # ─── Convenience ───
 all = [
-    "multi-speaker-transcribe[funasr,diarize,qwen-asr]",
+    "multi-speaker-transcribe[funasr,diarize,qwen-asr,separate]",
 ]
 dev = [
     "pytest>=8.0",

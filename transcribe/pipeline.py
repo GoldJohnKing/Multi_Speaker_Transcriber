@@ -76,6 +76,14 @@ def run_pipeline(
     if config is None:
         config = PipelineConfig()
 
+    # --separate requires --diarize
+    if config.separate and not config.diarize:
+        console.print(
+            "[bold yellow]警告: --separate 需要 --diarize，"
+            "已自动启用说话人识别[/bold yellow]"
+        )
+        config = _replace(config, diarize=True)
+
     device = resolve_device(config.device)
     output = output_path or _default_output_path(input_path)
     total_start = time.time()

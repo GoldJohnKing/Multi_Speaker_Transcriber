@@ -17,6 +17,8 @@ def main() -> None:
             "num_speakers": args.num_speakers,
             "cache_dir": args.cache_dir,
             "speaker_references": args.speaker_ref,
+            "separate": args.separate,
+            "separation_padding": args.separation_padding,
         },
     )
     run_pipeline(
