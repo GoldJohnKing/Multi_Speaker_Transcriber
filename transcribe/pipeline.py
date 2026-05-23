@@ -80,7 +80,26 @@ def run_pipeline(
     transcriber = create_asr(config.backend, device=device, hotword_path=config.hotwords)
     words = transcriber.transcribe_words(audio)
     transcriber.cleanup()
-    if verbose:
+
+    # Validate word-level timestamp quality for diarization pipeline
+    if config.diarize and words:
+        zero_dur_count = sum(1 for w in words if abs(w.end_time - w.start_time) < 1e-6)
+        zero_ratio = zero_dur_count / len(words) if words else 0
+        if zero_ratio > 0.8:
+            if verbose:
+                console.print(
+                    f"\n[bold yellow]警告: {zero_dur_count}/{len(words)} 个词的时长为零，"
+                    "词级时间戳可能无效。重叠区域的说话人归因将严重受限。[/bold yellow]"
+                )
+        elif verbose:
+            console.print(f"识别 {len(words)} 个词 ... 完成 ({time.time() - step_start:.1f}s)")
+    elif config.diarize and not words:
+        if verbose:
+            console.print(
+                "\n[bold yellow]警告: ASR 未产出任何词级时间戳，"
+                "重叠处理和说话人归因将不可用。[/bold yellow]"
+            )
+    elif verbose:
         console.print(f"识别 {len(words)} 个词 ... 完成 ({time.time() - step_start:.1f}s)")
 
     # ── Stage 3: Subtitle segmentation ──────────────────────────────

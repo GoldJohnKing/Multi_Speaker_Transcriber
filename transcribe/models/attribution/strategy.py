@@ -40,17 +40,22 @@ class TimestampStrategy:
         result: list[TranscriptSegment] = []
 
         for seg in segments:
-            speaker = self._assign_segment(seg, dia_segs)
-            result.append(replace(seg, speaker_id=speaker))
+            speaker, confidence = self._assign_segment(seg, dia_segs)
+            result.append(replace(seg, speaker_id=speaker, attribution_confidence=confidence))
 
         return result
 
     def _assign_segment(
         self, segment: TranscriptSegment, dia_segs: list[SpeakerSegment]
-    ) -> str:
-        """Find the dominant speaker for a segment by intersection duration."""
+    ) -> tuple[str, float]:
+        """Find the dominant speaker and confidence score.
+
+        Returns:
+            (speaker_id, confidence) where confidence is the winner's overlap
+            divided by (winner + runner-up) overlap. 1.0 when unambiguous.
+        """
         if not dia_segs:
-            return "SPEAKER_00"
+            return "SPEAKER_00", 0.0
 
         speaker_overlap: dict[str, float] = {}
 
@@ -64,10 +69,21 @@ class TimestampStrategy:
                     speaker_overlap.get(dia.speaker_id, 0.0) + intersection
                 )
 
-        if speaker_overlap:
-            return max(speaker_overlap.items(), key=lambda x: x[1])[0]
+        if not speaker_overlap:
+            speaker = self._nearest_speaker(segment, dia_segs)
+            return speaker, 0.0
 
-        return self._nearest_speaker(segment, dia_segs)
+        sorted_speakers = sorted(speaker_overlap.items(), key=lambda x: x[1], reverse=True)
+        winner_id, winner_overlap = sorted_speakers[0]
+
+        if len(sorted_speakers) == 1:
+            confidence = 1.0
+        else:
+            runner_up_overlap = sorted_speakers[1][1]
+            total = winner_overlap + runner_up_overlap
+            confidence = winner_overlap / total if total > 0 else 1.0
+
+        return winner_id, confidence
 
     @staticmethod
     def _nearest_speaker(

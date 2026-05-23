@@ -133,3 +133,92 @@ def test_diarizer_offset_audio(mock_pipeline):
 
     assert result.segments[0].start_time == pytest.approx(10.0, abs=0.01)
     assert result.segments[0].end_time == pytest.approx(11.0, abs=0.01)
+
+
+def test_diarizer_marks_is_overlap():
+    """Exclusive segments in overlap regions should have is_overlap=True."""
+    mock = MagicMock()
+    exclusive_tracks = [
+        (MockTurn(0.0, 2.0), None, "SPEAKER_00"),
+        (MockTurn(2.0, 3.0), None, "SPEAKER_01"),
+    ]
+    non_exclusive_tracks = [
+        (MockTurn(0.0, 2.0), None, "SPEAKER_00"),
+        (MockTurn(0.0, 1.5), None, "SPEAKER_01"),
+        (MockTurn(2.0, 3.0), None, "SPEAKER_01"),
+    ]
+    mock.return_value.exclusive_speaker_diarization.itertracks.return_value = exclusive_tracks
+    mock.return_value.speaker_diarization.itertracks.return_value = non_exclusive_tracks
+
+    with patch("transcribe.models.diarizer.Diarizer._load_pipeline", return_value=mock):
+        diarizer = Diarizer(device="cpu")
+        result = diarizer.process(_make_audio())
+
+    assert len(result.overlap_regions) > 0
+    s00 = [s for s in result.segments if s.speaker_id == "SPEAKER_00"]
+    assert any(s.is_overlap for s in s00)
+    s01 = [s for s in result.segments if s.speaker_id == "SPEAKER_01"]
+    assert all(not s.is_overlap for s in s01)
+
+
+def test_diarizer_stores_non_exclusive_segments():
+    """DiarizationResult should contain non-exclusive segments."""
+    mock = MagicMock()
+    exclusive_tracks = [
+        (MockTurn(0.0, 1.5), None, "SPEAKER_00"),
+        (MockTurn(1.0, 2.5), None, "SPEAKER_01"),
+    ]
+    non_exclusive_tracks = [
+        (MockTurn(0.0, 1.5), None, "SPEAKER_00"),
+        (MockTurn(1.0, 2.5), None, "SPEAKER_01"),
+        (MockTurn(2.5, 3.0), None, "SPEAKER_00"),
+    ]
+    mock.return_value.exclusive_speaker_diarization.itertracks.return_value = exclusive_tracks
+    mock.return_value.speaker_diarization.itertracks.return_value = non_exclusive_tracks
+
+    with patch("transcribe.models.diarizer.Diarizer._load_pipeline", return_value=mock):
+        diarizer = Diarizer(device="cpu")
+        result = diarizer.process(_make_audio())
+
+    assert len(result.non_exclusive_segments) == 3
+
+
+def test_merge_intervals_does_not_merge_adjacent():
+    """Adjacent intervals from different speaker pairs should NOT be merged."""
+    intervals = [(1.0, 2.0), (2.0, 3.0)]
+    result = Diarizer._merge_intervals(intervals)
+    assert len(result) == 2
+    assert result[0] == (1.0, 2.0)
+    assert result[1] == (2.0, 3.0)
+
+
+def test_merge_intervals_merges_genuine_overlap():
+    """Genuinely overlapping intervals should still be merged."""
+    intervals = [(1.0, 2.5), (2.0, 3.0)]
+    result = Diarizer._merge_intervals(intervals)
+    assert len(result) == 1
+    assert result[0] == (1.0, 3.0)
+
+
+def test_sweep_line_three_speakers():
+    """Three-way overlap should produce a single merged region."""
+    mock = MagicMock()
+    exclusive_tracks = [
+        (MockTurn(0.0, 3.0), None, "SPEAKER_00"),
+    ]
+    non_exclusive_tracks = [
+        (MockTurn(0.0, 3.0), None, "SPEAKER_00"),
+        (MockTurn(1.0, 2.0), None, "SPEAKER_01"),
+        (MockTurn(1.5, 2.5), None, "SPEAKER_02"),
+    ]
+    mock.return_value.exclusive_speaker_diarization.itertracks.return_value = exclusive_tracks
+    mock.return_value.speaker_diarization.itertracks.return_value = non_exclusive_tracks
+
+    with patch("transcribe.models.diarizer.Diarizer._load_pipeline", return_value=mock):
+        diarizer = Diarizer(device="cpu")
+        result = diarizer.process(_make_audio())
+
+    assert len(result.overlap_regions) == 1
+    ov_start, ov_end = result.overlap_regions[0]
+    assert ov_start == pytest.approx(1.0, abs=0.01)
+    assert ov_end == pytest.approx(2.5, abs=0.01)

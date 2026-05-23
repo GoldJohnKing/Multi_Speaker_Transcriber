@@ -1,6 +1,7 @@
 """Overlap handling — word-level speaker attribution for overlap regions."""
 from __future__ import annotations
 
+import logging
 from dataclasses import replace
 
 from transcribe.data.types import (
@@ -10,15 +11,17 @@ from transcribe.data.types import (
     WordTimestamp,
 )
 
+_logger = logging.getLogger(__name__)
+
 
 class OverlapHandler:
     """Per-speaker subtitle lines for overlap regions.
 
-    For each TranscriptSegment whose center falls in a detected overlap
-    region, attribute every word to the diarization speaker with the most
-    temporal intersection.  Then collect words by speaker independently
-    (not linearly), group each speaker's words into temporally continuous
-    spans, and build one TranscriptSegment per span.  Segments from
+    For each TranscriptSegment whose temporal overlap with a detected overlap
+    region exceeds 50% of its duration, attribute every word to the diarization
+    speaker with the most temporal intersection.  Then collect words by speaker
+    independently (not linearly), group each speaker's words into temporally
+    continuous spans, and build one TranscriptSegment per span.  Segments from
     different speakers may overlap in time, enabling simultaneous display.
     """
 
@@ -32,12 +35,20 @@ class OverlapHandler:
         if not overlap_regions:
             return segments
 
+        # Use non-exclusive segments for overlap attribution so all speakers
+        # in overlap regions are visible for word-level attribution.
+        dia_segs = (
+            diarization.non_exclusive_segments
+            if diarization.non_exclusive_segments
+            else diarization.segments
+        )
+
         result: list[TranscriptSegment] = []
         for seg in segments:
             if not self._in_overlap(seg, overlap_regions):
                 result.append(seg)
                 continue
-            result.extend(self._split_by_speaker(seg, diarization.segments))
+            result.extend(self._split_by_speaker(seg, dia_segs))
 
         return result
 
@@ -49,10 +60,26 @@ class OverlapHandler:
     def _in_overlap(
         seg: TranscriptSegment,
         overlap_regions: list[tuple[float, float]],
+        min_ratio: float = 0.5,
     ) -> bool:
-        """Center-point check (same logic as old MarkOverlapHandler)."""
-        center = (seg.start_time + seg.end_time) / 2.0
-        return any(s <= center < e for s, e in overlap_regions)
+        """Check if a segment substantially falls within any overlap region.
+
+        Uses intersection-duration ratio instead of center-point: if >= 50%
+        of the segment's duration overlaps with an overlap region, the segment
+        is treated as overlapping. This is more robust for short interjections
+        and segments at overlap region boundaries.
+        """
+        seg_dur = seg.end_time - seg.start_time
+        if seg_dur <= 0:
+            return False
+
+        for ov_start, ov_end in overlap_regions:
+            intersection = max(
+                0.0, min(seg.end_time, ov_end) - max(seg.start_time, ov_start)
+            )
+            if intersection >= seg_dur * min_ratio:
+                return True
+        return False
 
     def _split_by_speaker(
         self,
@@ -68,6 +95,11 @@ class OverlapHandler:
         """
         # Degraded path: no word-level timestamps
         if not seg.words:
+            _logger.warning(
+                "Overlap segment at %.2f-%.2f has no word timestamps, "
+                "cannot split by speaker. Text: '%s'",
+                seg.start_time, seg.end_time, seg.text[:50],
+            )
             return [replace(seg, is_overlap=True)]
 
         # 1. Attribute each word to a speaker
@@ -77,7 +109,7 @@ class OverlapHandler:
             attributed.append((w, speaker))
 
         # 2. Collect words per speaker (preserving original order)
-        from collections import OrderedDict
+        from collections import OrderedDict  # noqa: F811 — intentional method-level import
         speaker_words: OrderedDict[str, list[WordTimestamp]] = OrderedDict()
         for w, speaker in attributed:
             speaker_words.setdefault(speaker, []).append(w)
@@ -95,6 +127,7 @@ class OverlapHandler:
                         text=text,
                         is_overlap=True,
                         words=list(group),
+                        attribution_confidence=0.0,
                     )
                 )
         return sub_segs

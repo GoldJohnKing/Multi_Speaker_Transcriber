@@ -354,6 +354,147 @@ class TestOverlapHandler:
         assert all(s.is_overlap is True for s in result)
 
 
+def test_overlap_uses_non_exclusive_segments():
+    """OverlapHandler should use non-exclusive segments for word attribution.
+
+    In this scenario, exclusive diarization assigns the entire overlap region
+    to SPEAKER_00, but non-exclusive shows both speakers are active.
+    Without non-exclusive segments, all words would be attributed to SPEAKER_00.
+    """
+    words = [
+        WordTimestamp("我", 5.0, 5.2),
+        WordTimestamp("去", 5.2, 5.4),
+        WordTimestamp("不", 5.4, 5.6),
+        WordTimestamp("行", 5.6, 5.8),
+    ]
+    segments = [
+        TranscriptSegment(
+            speaker_id="SPEAKER_00",
+            start_time=5.0,
+            end_time=5.8,
+            text="我去不行",
+            is_overlap=False,
+            words=words,
+        )
+    ]
+    diarization = DiarizationResult(
+        segments=[
+            SpeakerSegment("SPEAKER_00", 5.0, 5.8),
+        ],
+        num_speakers=2,
+        overlap_regions=[(5.0, 5.8)],
+        non_exclusive_segments=[
+            SpeakerSegment("SPEAKER_00", 5.0, 5.4),
+            SpeakerSegment("SPEAKER_01", 5.4, 5.8),
+        ],
+    )
+    result = OverlapHandler().handle(segments, diarization)
+
+    assert len(result) == 2
+    s00 = [s for s in result if s.speaker_id == "SPEAKER_00"]
+    s01 = [s for s in result if s.speaker_id == "SPEAKER_01"]
+    assert len(s00) == 1
+    assert s00[0].text == "我去"
+    assert len(s01) == 1
+    assert s01[0].text == "不行"
+
+
+def test_short_segment_at_overlap_boundary():
+    """Short segment mostly inside overlap should be detected.
+
+    Old center-point check: center=5.0 NOT in [4.5, 5.0) -> missed.
+    New intersection-ratio: 0.1/0.2 = 50% >= 50% -> detected.
+    """
+    words = [WordTimestamp("哇", 4.9, 5.1)]
+    segments = [
+        TranscriptSegment(
+            speaker_id="SPEAKER_00",
+            start_time=4.9,
+            end_time=5.1,
+            text="哇",
+            words=words,
+        )
+    ]
+    diarization = DiarizationResult(
+        segments=[SpeakerSegment("SPEAKER_00", 4.0, 5.5)],
+        num_speakers=1,
+        overlap_regions=[(4.5, 5.0)],
+    )
+    result = OverlapHandler().handle(segments, diarization)
+    assert result[0].is_overlap is True
+
+
+def test_long_segment_barely_touching_overlap():
+    """Segment with <50% overlap should NOT be treated as overlap."""
+    segments = [
+        TranscriptSegment(
+            speaker_id="SPEAKER_00",
+            start_time=0.0,
+            end_time=5.0,
+            text="很长的一段话",
+            words=[WordTimestamp("很", 0.0, 5.0)],
+        )
+    ]
+    diarization = DiarizationResult(
+        segments=[SpeakerSegment("SPEAKER_00", 0.0, 5.0)],
+        num_speakers=1,
+        overlap_regions=[(4.5, 5.0)],
+    )
+    result = OverlapHandler().handle(segments, diarization)
+    assert result[0].is_overlap is False
+
+
+def test_segment_fully_inside_overlap():
+    """Segment fully inside overlap should always be detected."""
+    segments = [
+        TranscriptSegment(
+            speaker_id="SPEAKER_00",
+            start_time=3.0,
+            end_time=4.0,
+            text="测试",
+            words=[WordTimestamp("测", 3.0, 3.5), WordTimestamp("试", 3.5, 4.0)],
+        )
+    ]
+    diarization = DiarizationResult(
+        segments=[SpeakerSegment("SPEAKER_00", 0.0, 5.0)],
+        num_speakers=1,
+        overlap_regions=[(2.0, 5.0)],
+    )
+    result = OverlapHandler().handle(segments, diarization)
+    assert result[0].is_overlap is True
+
+
+def test_overlap_segments_have_zero_confidence():
+    """Overlap-split segments should have attribution_confidence=0.0."""
+    words = [
+        WordTimestamp("这", 10.0, 10.1),
+        WordTimestamp("个", 10.1, 10.2),
+        WordTimestamp("对", 10.3, 10.4),
+        WordTimestamp("好", 10.5, 10.6),
+    ]
+    segments = [
+        TranscriptSegment(
+            speaker_id="SPEAKER_00",
+            start_time=10.0,
+            end_time=10.6,
+            text="这个对好",
+            is_overlap=False,
+            words=words,
+        )
+    ]
+    diarization = DiarizationResult(
+        segments=[
+            SpeakerSegment("SPEAKER_00", 10.0, 10.3),
+            SpeakerSegment("SPEAKER_01", 10.3, 10.7),
+        ],
+        num_speakers=2,
+        overlap_regions=[(10.0, 10.6)],
+    )
+    result = OverlapHandler().handle(segments, diarization)
+    for seg in result:
+        assert seg.attribution_confidence == 0.0
+
+
 class TestAttributionEngine:
     def test_full_attribution_flow(self) -> None:
         segments = [
@@ -366,7 +507,7 @@ class TestAttributionEngine:
                 SpeakerSegment("SPEAKER_01", 0.8, 2.0),
             ],
             num_speakers=2,
-            overlap_regions=[(0.1, 0.3)],
+            overlap_regions=[(0.0, 0.3)],
         )
         engine = AttributionEngine()
         result = engine.run(segments, diarization)
@@ -374,7 +515,7 @@ class TestAttributionEngine:
         assert len(result) == 2
         assert result[0].speaker_id == "SPEAKER_00"
         assert result[0].text == "你好"
-        assert result[0].is_overlap is True  # center=0.2 in [0.1, 0.3)
+        assert result[0].is_overlap is True  # intersection=0.3 >= 0.4*0.5
         assert result[1].speaker_id == "SPEAKER_01"
         assert result[1].text == "世界"
         assert result[1].is_overlap is False
@@ -422,3 +563,140 @@ class TestAttributionEngine:
         assert result[0].text == "这个"
         assert result[1].speaker_id == "SPEAKER_01"
         assert result[1].text == "好"
+
+
+class TestTurnBoundarySplitting:
+    def test_segment_spanning_two_speakers_is_split(self):
+        """A segment spanning A->B turn boundary should be split."""
+        words = [
+            WordTimestamp("大", 0.0, 0.5),
+            WordTimestamp("家", 0.5, 1.0),
+            WordTimestamp("好", 1.0, 1.5),
+            WordTimestamp("谢", 2.0, 2.5),
+            WordTimestamp("谢", 2.5, 3.0),
+        ]
+        segments = [
+            TranscriptSegment(
+                speaker_id="SPEAKER_00",
+                start_time=0.0,
+                end_time=3.0,
+                text="大家好谢谢",
+                words=words,
+            )
+        ]
+        diarization = DiarizationResult(
+            segments=[
+                SpeakerSegment("SPEAKER_00", 0.0, 1.8),
+                SpeakerSegment("SPEAKER_01", 1.8, 4.0),
+            ],
+            num_speakers=2,
+        )
+        engine = AttributionEngine()
+        result = engine.run(segments, diarization)
+
+        # Should be split into two segments at the turn boundary (t=1.8)
+        assert len(result) == 2
+        assert result[0].speaker_id == "SPEAKER_00"
+        assert result[0].text == "大家好"
+        assert result[1].speaker_id == "SPEAKER_01"
+        assert result[1].text == "谢谢"
+
+    def test_no_turn_boundary_no_split(self):
+        """Segment entirely within one speaker's turn should not be split."""
+        segments = [
+            TranscriptSegment("SPEAKER_00", 0.0, 1.0, "你好"),
+        ]
+        diarization = DiarizationResult(
+            segments=[SpeakerSegment("SPEAKER_00", 0.0, 2.0)],
+            num_speakers=1,
+        )
+        engine = AttributionEngine()
+        result = engine.run(segments, diarization)
+        assert len(result) == 1
+
+
+class TestAttributionConfidence:
+    def test_single_speaker_high_confidence(self):
+        """Segment fully within one speaker -> confidence 1.0."""
+        segments = [TranscriptSegment("SPEAKER_00", 0.5, 2.0, "你好")]
+        diarization = DiarizationResult(
+            segments=[SpeakerSegment("SPEAKER_00", 0.0, 3.0)],
+            num_speakers=1,
+        )
+        result = TimestampStrategy().attribute(segments, diarization)
+        assert result[0].attribution_confidence == 1.0
+
+    def test_equal_overlap_low_confidence(self):
+        """Equal overlap with two speakers -> confidence ~0.5."""
+        segments = [TranscriptSegment("SPEAKER_00", 0.0, 2.0, "你好")]
+        diarization = DiarizationResult(
+            segments=[
+                SpeakerSegment("SPEAKER_00", 0.0, 1.0),
+                SpeakerSegment("SPEAKER_01", 1.0, 2.0),
+            ],
+            num_speakers=2,
+        )
+        result = TimestampStrategy().attribute(segments, diarization)
+        assert 0.45 <= result[0].attribution_confidence <= 0.55
+
+    def test_fallback_zero_confidence(self):
+        """No overlap, nearest-speaker fallback -> confidence 0.0."""
+        segments = [TranscriptSegment("SPEAKER_00", 1.2, 1.3, "嗯")]
+        diarization = DiarizationResult(
+            segments=[
+                SpeakerSegment("SPEAKER_00", 0.0, 1.0),
+                SpeakerSegment("SPEAKER_01", 2.0, 3.0),
+            ],
+            num_speakers=2,
+        )
+        result = TimestampStrategy().attribute(segments, diarization)
+        assert result[0].attribution_confidence == 0.0
+
+    def test_dominant_speaker_high_confidence(self):
+        """75/25 split -> confidence ~0.75."""
+        segments = [TranscriptSegment("SPEAKER_00", 0.0, 4.0, "你好世界")]
+        diarization = DiarizationResult(
+            segments=[
+                SpeakerSegment("SPEAKER_00", 0.0, 3.0),
+                SpeakerSegment("SPEAKER_01", 3.0, 4.0),
+            ],
+            num_speakers=2,
+        )
+        result = TimestampStrategy().attribute(segments, diarization)
+        assert result[0].attribution_confidence == pytest.approx(0.75, abs=0.01)
+
+
+class TestTurnBoundarySplittingWithoutWords:
+    def test_segment_without_words_split_at_boundary(self):
+        """Segment without word timestamps spanning a turn boundary should be
+        split into sub-segments, each re-attributed to the correct speaker.
+        Text is duplicated across sub-segments (known limitation).
+        """
+        segments = [
+            TranscriptSegment(
+                speaker_id="SPEAKER_00",
+                start_time=0.0,
+                end_time=4.0,
+                text="大家好谢谢",
+            )
+        ]
+        diarization = DiarizationResult(
+            segments=[
+                SpeakerSegment("SPEAKER_00", 0.0, 2.0),
+                SpeakerSegment("SPEAKER_01", 2.0, 4.0),
+            ],
+            num_speakers=2,
+        )
+        engine = AttributionEngine()
+        result = engine.run(segments, diarization)
+
+        assert len(result) == 2
+        assert result[0].speaker_id == "SPEAKER_00"
+        assert result[0].start_time == pytest.approx(0.0)
+        assert result[0].end_time == pytest.approx(2.0)
+        assert result[1].speaker_id == "SPEAKER_01"
+        assert result[1].start_time == pytest.approx(2.0)
+        assert result[1].end_time == pytest.approx(4.0)
+        # Text is duplicated (known limitation: can't split text without words)
+        assert result[0].text == "大家好谢谢"
+        assert result[1].text == "大家好谢谢"

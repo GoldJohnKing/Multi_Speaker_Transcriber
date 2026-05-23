@@ -42,6 +42,7 @@ class DiarizationResult:
     segments: list[SpeakerSegment]
     num_speakers: int
     overlap_regions: list[tuple[float, float]] = field(default_factory=list)
+    non_exclusive_segments: list[SpeakerSegment] = field(default_factory=list)
 
 
 @dataclass
@@ -54,6 +55,7 @@ class TranscriptSegment:
     text: str  # with punctuation
     is_overlap: bool = False
     words: list[WordTimestamp] | None = None  # original word-level timestamps
+    attribution_confidence: float = 1.0  # 0.0-1.0, speaker attribution confidence
 
 
 @dataclass
