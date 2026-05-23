@@ -187,7 +187,11 @@ class OverlapSeparator:
         token = os.environ.get("HF_TOKEN")
 
         from pyannote.audio import Pipeline
-        pipeline = Pipeline.from_pretrained(model_name, token=token)
+        pipeline = Pipeline.from_pretrained(
+            model_name,
+            token=token,
+            cache_dir=os.path.join(os.path.expanduser("~"), ".cache", "huggingface"),
+        )
         if self._device != "cpu" and torch.cuda.is_available():
             pipeline = pipeline.to(torch.device(self._device))
         return pipeline
