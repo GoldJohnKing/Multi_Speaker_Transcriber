@@ -12,12 +12,14 @@ from transcribe.data.types import (
 
 
 class OverlapHandler:
-    """Split overlap-region segments into per-speaker sub-segments.
+    """Per-speaker subtitle lines for overlap regions.
 
     For each TranscriptSegment whose center falls in a detected overlap
     region, attribute every word to the diarization speaker with the most
-    temporal intersection, then group consecutive same-speaker words into
-    independent TranscriptSegments.
+    temporal intersection.  Then collect words by speaker independently
+    (not linearly), group each speaker's words into temporally continuous
+    spans, and build one TranscriptSegment per span.  Segments from
+    different speakers may overlap in time, enabling simultaneous display.
     """
 
     def handle(
@@ -57,7 +59,13 @@ class OverlapHandler:
         seg: TranscriptSegment,
         dia_segs: list[SpeakerSegment],
     ) -> list[TranscriptSegment]:
-        """Word-level attribution → group by speaker → build sub-segments."""
+        """Per-speaker word collection → temporal span grouping → sub-segments.
+
+        Unlike linear consecutive grouping, this collects all words attributed
+        to the same speaker and groups them into temporally continuous spans.
+        This prevents a single interjection from another speaker from
+        fragmenting the primary speaker's subtitle line.
+        """
         # Degraded path: no word-level timestamps
         if not seg.words:
             return [replace(seg, is_overlap=True)]
@@ -68,25 +76,27 @@ class OverlapHandler:
             speaker = self._attribute_word(w, dia_segs)
             attributed.append((w, speaker))
 
-        # 2. Group consecutive same-speaker words
-        groups = self._group_consecutive(attributed)
+        # 2. Collect words per speaker (preserving original order)
+        from collections import OrderedDict
+        speaker_words: OrderedDict[str, list[WordTimestamp]] = OrderedDict()
+        for w, speaker in attributed:
+            speaker_words.setdefault(speaker, []).append(w)
 
-        # 3. Build one TranscriptSegment per group
+        # 3. Within each speaker, group into temporally continuous spans
         sub_segs: list[TranscriptSegment] = []
-        for group in groups:
-            words = [w for w, _ in group]
-            speaker_id = group[0][1]
-            text = "".join(w.word for w in words)
-            sub_segs.append(
-                TranscriptSegment(
-                    speaker_id=speaker_id,
-                    start_time=words[0].start_time,
-                    end_time=words[-1].end_time,
-                    text=text,
-                    is_overlap=True,
-                    words=words,
+        for speaker_id, words in speaker_words.items():
+            for group in self._group_temporal_spans(words):
+                text = "".join(w.word for w in group)
+                sub_segs.append(
+                    TranscriptSegment(
+                        speaker_id=speaker_id,
+                        start_time=group[0].start_time,
+                        end_time=group[-1].end_time,
+                        text=text,
+                        is_overlap=True,
+                        words=list(group),
+                    )
                 )
-            )
         return sub_segs
 
     @staticmethod
@@ -122,19 +132,25 @@ class OverlapHandler:
         return nearest.speaker_id if nearest else best_speaker
 
     @staticmethod
-    def _group_consecutive(
-        attributed: list[tuple[WordTimestamp, str]],
-    ) -> list[list[tuple[WordTimestamp, str]]]:
-        """Group consecutive (word, speaker) pairs by speaker identity."""
-        if not attributed:
+    def _group_temporal_spans(
+        words: list[WordTimestamp],
+        max_gap: float = 0.5,
+    ) -> list[list[WordTimestamp]]:
+        """Group words into temporally continuous spans.
+
+        A gap between consecutive words exceeding *max_gap* starts a new span.
+        This ensures that if a speaker has non-contiguous utterances within an
+        overlap region (e.g. speaks, pauses, speaks again), they produce
+        separate subtitle lines.
+        """
+        if not words:
             return []
-        groups: list[list[tuple[WordTimestamp, str]]] = []
-        current = [attributed[0]]
-        for item in attributed[1:]:
-            if item[1] == current[-1][1]:
-                current.append(item)
+        groups: list[list[WordTimestamp]] = [[words[0]]]
+        for w in words[1:]:
+            prev = groups[-1][-1]
+            gap = w.start_time - prev.end_time
+            if gap > max_gap:
+                groups.append([w])
             else:
-                groups.append(current)
-                current = [item]
-        groups.append(current)
+                groups[-1].append(w)
         return groups

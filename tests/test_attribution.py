@@ -229,6 +229,64 @@ class TestOverlapHandler:
         speakers = {seg.speaker_id for seg in result}
         assert "SPEAKER_01" in speakers
 
+    def test_per_speaker_independent_grouping(self) -> None:
+        """Interleaved speakers produce independent per-speaker lines, not fragments.
+
+        Speaker A says: 我(1.0) 觉(1.4) 得(1.8)
+        Speaker B says: 不(1.2) 对(1.6)
+
+        Linear grouping would give: A:我, B:不, A:觉, B:对, A:得 → 5 fragments.
+        Per-speaker grouping gives: A:"我觉得" (1.0→1.8), B:"不对" (1.2→1.6) → 2 lines.
+        """
+        words = [
+            WordTimestamp("我", 1.0, 1.1),
+            WordTimestamp("不", 1.2, 1.3),
+            WordTimestamp("觉", 1.4, 1.5),
+            WordTimestamp("对", 1.6, 1.7),
+            WordTimestamp("得", 1.8, 1.9),
+        ]
+        segments = [
+            TranscriptSegment(
+                speaker_id="SPEAKER_00",
+                start_time=1.0,
+                end_time=1.9,
+                text="我觉得不对",
+                is_overlap=False,
+                words=words,
+            )
+        ]
+        diarization = DiarizationResult(
+            segments=[
+                SpeakerSegment("SPEAKER_00", 0.0, 1.15),
+                SpeakerSegment("SPEAKER_01", 1.15, 1.35),
+                SpeakerSegment("SPEAKER_00", 1.35, 1.55),
+                SpeakerSegment("SPEAKER_01", 1.55, 1.75),
+                SpeakerSegment("SPEAKER_00", 1.75, 3.0),
+            ],
+            num_speakers=2,
+            overlap_regions=[(0.5, 2.5)],
+        )
+        result = OverlapHandler().handle(segments, diarization)
+
+        # Should produce 2 sub-segments (one per speaker), NOT 5 fragments
+        assert len(result) == 2
+
+        # SPEAKER_00 line: "我觉得" with time 1.0→1.9
+        s00 = [s for s in result if s.speaker_id == "SPEAKER_00"]
+        assert len(s00) == 1
+        assert s00[0].text == "我觉得"
+        assert s00[0].start_time == pytest.approx(1.0)
+        assert s00[0].end_time == pytest.approx(1.9)
+        assert s00[0].is_overlap is True
+
+        # SPEAKER_01 line: "不对" with time 1.2→1.7
+        s01 = [s for s in result if s.speaker_id == "SPEAKER_01"]
+        assert len(s01) == 1
+        assert s01[0].text == "不对"
+        assert s01[0].start_time == pytest.approx(1.2)
+        assert s01[0].end_time == pytest.approx(1.7)
+        assert s01[0].is_overlap is True
+
     def test_all_words_same_speaker_produces_one_segment(self) -> None:
         """All words in overlap attributed to same speaker → one sub-segment."""
         words = [
