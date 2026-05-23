@@ -31,7 +31,7 @@ def _texts(segments: list[TranscriptSegment]) -> list[str]:
 
 
 class TestSentenceEndSplit:
-    """Sentence-ending punctuation triggers a hard split and is discarded."""
+    """Sentence-ending punctuation triggers a hard split; ！？ are retained in output."""
 
     def test_single_sentence_no_punctuation(self) -> None:
         words = _ws([("你", 0.0, 0.5), ("好", 0.5, 1.0)])
@@ -47,12 +47,12 @@ class TestSentenceEndSplit:
         # Durations must exceed min_duration (0.833s) to avoid merge-back
         words = _ws([("好", 0.0, 1.0), ("！", 1.0, 1.0), ("棒", 1.0, 2.0)])
         segs = SubtitleSegmenter().segment(words)
-        assert _texts(segs) == ["好", "棒"]
+        assert _texts(segs) == ["好！", "棒"]
 
     def test_split_at_question(self) -> None:
         words = _ws([("是", 0.0, 0.5), ("吗", 0.5, 1.0), ("？", 1.0, 1.0), ("对", 1.0, 1.5)])
         segs = SubtitleSegmenter().segment(words)
-        assert _texts(segs) == ["是吗", "对"]
+        assert _texts(segs) == ["是吗？", "对"]
 
     def test_multiple_sentence_end(self) -> None:
         words = _ws([
@@ -61,12 +61,24 @@ class TestSentenceEndSplit:
             ("再", 2.0, 2.5), ("见", 2.5, 3.0),
         ])
         segs = SubtitleSegmenter().segment(words)
-        assert _texts(segs) == ["你好", "世界", "再见"]
+        assert _texts(segs) == ["你好", "世界！", "再见"]
 
     def test_trailing_sentence_end_no_empty(self) -> None:
         words = _ws([("你", 0.0, 0.5), ("好", 0.5, 1.0), ("。", 1.0, 1.0)])
         segs = SubtitleSegmenter().segment(words)
         assert _texts(segs) == ["你好"]
+
+    def test_trailing_exclamation_retained(self) -> None:
+        """Trailing ！ is retained in the final segment text."""
+        words = _ws([("好", 0.0, 1.0), ("！", 1.0, 1.0)])
+        segs = SubtitleSegmenter().segment(words)
+        assert _texts(segs) == ["好！"]
+
+    def test_consecutive_sentence_end_marks(self) -> None:
+        """Consecutive ！？ — only the first attaches to preceding content."""
+        words = _ws([("好", 0.0, 1.0), ("！", 1.0, 1.0), ("？", 1.0, 1.0), ("棒", 1.0, 2.0)])
+        segs = SubtitleSegmenter().segment(words)
+        assert _texts(segs) == ["好！", "棒"]
 
     def test_leading_sentence_end_discarded(self) -> None:
         words = _ws([("！", 0.0, 0.0), ("你", 0.0, 0.5), ("好", 0.5, 1.0)])
@@ -147,22 +159,32 @@ class TestClauseSplit:
 
 
 class TestMergeShort:
-    """Short segments are merged with adjacent segments."""
+    """Short segments are merged with adjacent segments within the same sentence."""
 
-    def test_short_merged_with_next(self) -> None:
-        words = _ws([("你", 0.0, 0.3), ("。", 0.3, 0.3), ("好", 0.3, 1.5)])
+    def test_short_merged_with_next_within_sentence(self) -> None:
+        """Short groups from gap splitting (same sentence) are merged."""
+        # No sentence-end punctuation — gap split produces two groups,
+        # both short, which should be merged back.
+        words = _ws([("你", 0.0, 0.3), ("好", 0.3, 1.5)])
         segs = SubtitleSegmenter(min_duration=0.833).segment(words)
-        # "你" (0.3s < 0.833) should merge with "好"
         assert _texts(segs) == ["你好"]
 
-    def test_multiple_short_merged(self) -> None:
+    def test_short_not_merged_across_sentence_boundary(self) -> None:
+        """Sentence-end boundary prevents merging short segments."""
+        words = _ws([("你", 0.0, 0.3), ("。", 0.3, 0.3), ("好", 0.3, 1.5)])
+        segs = SubtitleSegmenter(min_duration=0.833).segment(words)
+        # "你" and "好" are in different Pass 1 groups (。split) — not merged
+        assert _texts(segs) == ["你", "好"]
+
+    def test_multiple_short_merged_within_sentence(self) -> None:
+        """Multiple short gap-split groups in the same sentence merge."""
+        # Continuous words with small gaps — no sentence-end punctuation
         words = _ws([
-            ("A", 0.0, 0.3), ("。", 0.3, 0.3),
-            ("B", 0.3, 0.6), ("。", 0.6, 0.6),
+            ("A", 0.0, 0.3),
+            ("B", 0.3, 0.6),
             ("C", 0.6, 1.5),
         ])
         segs = SubtitleSegmenter(min_duration=0.833).segment(words)
-        # A (0.3s) and B (0.3s) should merge with C (0.9s)
         assert len(segs) == 1
         assert segs[0].text == "ABC"
 

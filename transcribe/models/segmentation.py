@@ -9,6 +9,11 @@ from transcribe.data.types import TranscriptSegment, WordTimestamp
 
 _ALL_PUNCT = _SENTENCE_END | _CLAUSE_END
 
+# Subset of sentence-end punctuation retained in output (attached to preceding segment).
+_SENTENCE_END_RETAIN = frozenset("！？！!")
+# Punctuation stripped from final subtitle text (excludes retained ！？！!).
+_STRIP_PUNCT = _ALL_PUNCT - _SENTENCE_END_RETAIN
+
 
 class SubtitleSegmenter:
     """Split ``list[WordTimestamp]`` into ``list[TranscriptSegment]``.
@@ -63,15 +68,20 @@ class SubtitleSegmenter:
             return []
 
         # Pass 1: Split at sentence-end punctuation
-        groups = self._split_sentence_end(words)
+        pass1_groups = self._split_sentence_end(words)
 
-        # Pass 2: Split at large gaps
+        # Pass 2: Split at large gaps — tag each sub-group with its
+        # Pass 1 parent index so Pass 3 never merges across sentence boundaries.
         gap_groups: list[list[WordTimestamp]] = []
-        for g in groups:
-            gap_groups.extend(self._split_by_gap(g))
+        parent_ids: list[int] = []
+        for idx, g in enumerate(pass1_groups):
+            subs = self._split_by_gap(g)
+            for s in subs:
+                gap_groups.append(s)
+                parent_ids.append(idx)
 
-        # Pass 3: Merge short groups
-        merged = self._merge_short_groups(gap_groups)
+        # Pass 3: Merge short groups (never across Pass 1 boundaries)
+        merged = self._merge_short_groups(gap_groups, parent_ids)
 
         # Pass 4: Split oversized groups
         fixed: list[list[WordTimestamp]] = []
@@ -84,7 +94,7 @@ class SubtitleSegmenter:
         # Pass 5: CPS validation
         validated = self._validate_cps(fixed)
 
-        # Final: build TranscriptSegments (strip all punctuation)
+        # Final: build TranscriptSegments (strip non-retained punctuation)
         return self._to_segments(validated)
 
     # ------------------------------------------------------------------
@@ -116,15 +126,23 @@ class SubtitleSegmenter:
     def _split_sentence_end(
         self, words: list[WordTimestamp]
     ) -> list[list[WordTimestamp]]:
-        """Split at sentence-ending punctuation; discard it. Keep clause punct."""
+        """Split at sentence-ending punctuation.
+
+        Periods are discarded.  Question marks and exclamation marks are
+        retained (attached to the preceding segment) so that they appear
+        in the final subtitle text per Netflix / industry standards.
+        Leading ``！？`` without preceding content are discarded.
+        """
         groups: list[list[WordTimestamp]] = []
         buf: list[WordTimestamp] = []
         for w in words:
             if w.word in _SENTENCE_END:
+                if w.word in _SENTENCE_END_RETAIN and buf:
+                    buf.append(w)  # keep ！？ with preceding content
                 if buf:
                     groups.append(buf)
                     buf = []
-                continue  # discard sentence-end punct
+                continue
             buf.append(w)  # keep clause-end and content words
         if buf:
             groups.append(buf)
@@ -183,17 +201,29 @@ class SubtitleSegmenter:
     # ------------------------------------------------------------------
 
     def _merge_short_groups(
-        self, groups: list[list[WordTimestamp]]
+        self,
+        groups: list[list[WordTimestamp]],
+        parent_ids: list[int] | None = None,
     ) -> list[list[WordTimestamp]]:
-        """Merge groups whose content duration < min_duration."""
+        """Merge groups whose content duration < min_duration.
+
+        When *parent_ids* is provided, groups from different parents (i.e.
+        separated by a Pass 1 sentence-end boundary) are never merged, even
+        if one of them is shorter than *min_duration*.
+        """
         if not groups:
             return []
 
         result: list[list[WordTimestamp]] = [groups[0]]
+        result_parents: list[int] = [parent_ids[0] if parent_ids else 0]
         for i in range(1, len(groups)):
             prev = result[-1]
             prev_dur = self._content_duration(prev)
-            if prev_dur < self.min_duration:
+            same_parent = (
+                parent_ids is None
+                or parent_ids[i] == result_parents[-1]
+            )
+            if prev_dur < self.min_duration and same_parent:
                 candidate = prev + groups[i]
                 merged_dur = self._content_duration(candidate)
                 merged_chars = self._content_chars(candidate)
@@ -201,6 +231,7 @@ class SubtitleSegmenter:
                     result[-1] = candidate
                     continue
             result.append(groups[i])
+            result_parents.append(parent_ids[i] if parent_ids else i)
         return result
 
     # ------------------------------------------------------------------
@@ -319,10 +350,10 @@ class SubtitleSegmenter:
 
     @staticmethod
     def _to_segments(groups: list[list[WordTimestamp]]) -> list[TranscriptSegment]:
-        """Build TranscriptSegments from word groups, stripping all punctuation."""
+        """Build TranscriptSegments from word groups, stripping non-retained punctuation."""
         segments: list[TranscriptSegment] = []
         for group in groups:
-            content = [w for w in group if w.word not in _ALL_PUNCT]
+            content = [w for w in group if w.word not in _STRIP_PUNCT]
             if not content:
                 continue
             text = "".join(w.word for w in content)
