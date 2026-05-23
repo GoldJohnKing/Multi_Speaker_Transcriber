@@ -79,3 +79,5 @@ class PipelineConfig:
     cache_dir: str = ".cache"
     num_speakers: int | None = None  # known speaker count, auto-detect if None
     speaker_references: str | None = None  # directory of speaker reference audio samples
+    separate: bool = False  # enable speech separation for overlap regions
+    separation_padding: float = 3.0  # seconds of context around overlap clips

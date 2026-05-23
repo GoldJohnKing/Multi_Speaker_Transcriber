@@ -28,6 +28,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="Disable speaker diarization (all audio attributed to one speaker)",
     )
     parser.add_argument(
+        "--separate",
+        action="store_true",
+        help="Enable speech separation for overlap regions (requires --diarize)",
+    )
+    parser.add_argument(
+        "--separation-padding",
+        type=float,
+        default=3.0,
+        help="Seconds of context padding around overlap clips (default: 3.0)",
+    )
+    parser.add_argument(
         "--speaker-ref",
         metavar="DIR",
         help="Directory of speaker audio samples (filename without extension = speaker name)",
