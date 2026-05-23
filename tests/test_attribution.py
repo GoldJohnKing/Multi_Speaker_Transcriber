@@ -316,6 +316,43 @@ class TestOverlapHandler:
         assert result[0].text == "你好"
         assert result[0].is_overlap is True
 
+    def test_speaker_with_gap_produces_separate_lines(self) -> None:
+        """One speaker with a temporal gap in overlap produces separate lines."""
+        words = [
+            WordTimestamp("你", 1.0, 1.1),
+            WordTimestamp("好", 1.1, 1.2),
+            # 1.0s gap
+            WordTimestamp("世", 2.2, 2.3),
+            WordTimestamp("界", 2.3, 2.4),
+        ]
+        segments = [
+            TranscriptSegment(
+                speaker_id="SPEAKER_00",
+                start_time=1.0,
+                end_time=2.4,
+                text="你好世界",
+                is_overlap=False,
+                words=words,
+            )
+        ]
+        diarization = DiarizationResult(
+            segments=[
+                SpeakerSegment("SPEAKER_00", 0.0, 3.0),
+            ],
+            num_speakers=1,
+            overlap_regions=[(0.5, 2.5)],
+        )
+        result = OverlapHandler().handle(segments, diarization)
+
+        # All words attributed to SPEAKER_00, but split into 2 lines by gap
+        assert len(result) == 2
+        assert result[0].text == "你好"
+        assert result[0].start_time == pytest.approx(1.0)
+        assert result[1].text == "世界"
+        assert result[1].start_time == pytest.approx(2.2)
+        assert all(s.speaker_id == "SPEAKER_00" for s in result)
+        assert all(s.is_overlap is True for s in result)
+
 
 class TestAttributionEngine:
     def test_full_attribution_flow(self) -> None:
