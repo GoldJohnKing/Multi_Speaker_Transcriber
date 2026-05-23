@@ -2,9 +2,10 @@
 
 import numpy as np
 import pytest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
+from dataclasses import replace as _replace
 
-from transcribe.data.types import AudioSegment, WordTimestamp
+from transcribe.data.types import AudioSegment, TranscriptSegment, WordTimestamp
 from transcribe.models.separator import (
     OverlapClip,
     extract_overlap_clips,
@@ -152,3 +153,91 @@ class TestMapLocalToGlobalSpeakers:
         )
         assert mapping["A"] == "SPEAKER_00"
         assert mapping["B"] == "SPEAKER_01"
+
+
+def _make_clip(start: float = 0.0, end: float = 10.0, sr: int = 16000) -> OverlapClip:
+    waveform = np.random.randn(int(sr * (end - start))).astype(np.float32) * 0.1
+    return OverlapClip(
+        waveform=waveform, sample_rate=sr,
+        start_time=start, end_time=end,
+        source_overlaps=[(start + 3.0, end - 3.0)],
+    )
+
+
+class TestOverlapSeparator:
+    @pytest.fixture
+    def mock_asr(self):
+        asr = MagicMock()
+        # Return words spread across the clip so some land in the overlap region
+        asr.transcribe_words.side_effect = lambda audio: [
+            WordTimestamp(word="你", start_time=audio.start_time + 2.5, end_time=audio.start_time + 3.0),
+            WordTimestamp(word="好", start_time=audio.start_time + 3.0, end_time=audio.start_time + 3.5),
+            WordTimestamp(word="吗", start_time=audio.start_time + 4.0, end_time=audio.start_time + 4.5),
+        ]
+        return asr
+
+    @pytest.fixture
+    def mock_pixit_pipeline(self):
+        pipeline = MagicMock()
+        mock_dia = MagicMock()
+        mock_dia.labels.return_value = ["A", "B"]
+
+        class FakeTurn:
+            def __init__(self, s, e):
+                self.start = s
+                self.end = e
+
+        mock_dia.itertracks.return_value = [
+            (FakeTurn(0.0, 10.0), None, "A"),
+            (FakeTurn(0.0, 10.0), None, "B"),
+        ]
+
+        mock_sources = MagicMock()
+        mock_sources.data = np.random.randn(160000, 2).astype(np.float32) * 0.1
+
+        pipeline.return_value = (mock_dia, mock_sources)
+        return pipeline
+
+    def test_separate_returns_segments(self, mock_asr, mock_pixit_pipeline):
+        from transcribe.models.separator import OverlapSeparator
+
+        with patch("transcribe.models.separator.OverlapSeparator._load_pipeline", return_value=mock_pixit_pipeline):
+            separator = OverlapSeparator(device="cpu")
+            audio = _make_audio(30.0)
+            dia_result = MagicMock()
+            dia_result.overlap_regions = [(10.0, 12.0)]
+            dia_result.segments = [
+                MagicMock(speaker_id="SPEAKER_00", start_time=0.0, end_time=10.0),
+                MagicMock(speaker_id="SPEAKER_01", start_time=10.0, end_time=20.0),
+                MagicMock(speaker_id="SPEAKER_00", start_time=20.0, end_time=30.0),
+            ]
+
+            result = separator.separate(audio, dia_result, mock_asr)
+
+        assert isinstance(result, list)
+        assert len(result) > 0
+        for seg in result:
+            assert isinstance(seg, TranscriptSegment)
+            assert seg.is_overlap is True
+            assert seg.speaker_id.startswith("SPEAKER_")
+
+    def test_separate_no_overlaps_returns_empty(self, mock_asr, mock_pixit_pipeline):
+        from transcribe.models.separator import OverlapSeparator
+
+        with patch("transcribe.models.separator.OverlapSeparator._load_pipeline", return_value=mock_pixit_pipeline):
+            separator = OverlapSeparator(device="cpu")
+            audio = _make_audio(30.0)
+            dia_result = MagicMock()
+            dia_result.overlap_regions = []
+
+            result = separator.separate(audio, dia_result, mock_asr)
+
+        assert result == []
+
+    def test_cleanup_releases_pipeline(self, mock_pixit_pipeline):
+        from transcribe.models.separator import OverlapSeparator
+
+        with patch("transcribe.models.separator.OverlapSeparator._load_pipeline", return_value=mock_pixit_pipeline):
+            separator = OverlapSeparator(device="cpu")
+            separator.cleanup()
+            assert separator._pipeline is None
