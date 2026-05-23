@@ -176,33 +176,44 @@ def run_pipeline(
             if verbose:
                 console.print("  重叠区域语音分离 ...", end=" ")
 
-            separator = OverlapSeparator(
-                device=device,
-                num_speakers=config.num_speakers,
-                padding=config.separation_padding,
-            )
-
-            # Reload ASR for per-speaker transcription
-            transcriber = create_asr(
-                config.backend, device=device, hotword_path=config.hotwords,
-            )
-
-            overlap_segments = separator.separate(audio, diarization, transcriber)
-
-            transcriber.cleanup()
-            separator.cleanup()
-
-            # Replace main pipeline's overlap-region segments
-            if overlap_segments:
-                all_segments = _replace_overlap_segments(
-                    all_segments, overlap_segments, diarization.overlap_regions,
+            try:
+                separator = OverlapSeparator(
+                    device=device,
+                    num_speakers=config.num_speakers,
+                    padding=config.separation_padding,
                 )
-
-            if verbose:
+            except Exception as e:
                 console.print(
-                    f"分离出 {len(overlap_segments)} 条字幕 ... "
-                    f"完成 ({time.time() - sep_step_start:.1f}s)"
+                    f"\n[bold yellow]警告: 语音分离模型加载失败 ({e.__class__.__name__})，"
+                    "跳过重叠区域分离[/bold yellow]"
                 )
+                if verbose:
+                    console.print(
+                        f"  提示: pyannote/speech-separation-ami-1.0 需要在 "
+                        "https://hf.co/pyannote/speech-separation-ami-1.0 单独申请访问"
+                    )
+            else:
+                # Reload ASR for per-speaker transcription
+                transcriber = create_asr(
+                    config.backend, device=device, hotword_path=config.hotwords,
+                )
+
+                overlap_segments = separator.separate(audio, diarization, transcriber)
+
+                transcriber.cleanup()
+                separator.cleanup()
+
+                # Replace main pipeline's overlap-region segments
+                if overlap_segments:
+                    all_segments = _replace_overlap_segments(
+                        all_segments, overlap_segments, diarization.overlap_regions,
+                    )
+
+                if verbose:
+                    console.print(
+                        f"分离出 {len(overlap_segments)} 条字幕 ... "
+                        f"完成 ({time.time() - sep_step_start:.1f}s)"
+                    )
 
     # ── Stage 5: Speaker reference matching ─────────────────────────
     speaker_name_map: dict[str, str] = {}
