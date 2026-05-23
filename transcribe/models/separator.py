@@ -39,12 +39,17 @@ def extract_overlap_clips(
     if not overlap_regions:
         return []
 
+    # Filter out zero-duration overlaps
+    filtered = [(s, e) for s, e in overlap_regions if e > s]
+    if not filtered:
+        return []
+
     audio_start = audio.start_time
     audio_end = audio.end_time
 
     # Step 1: Pad each overlap region
     padded: list[tuple[float, float, tuple[float, float]]] = []
-    for ov_start, ov_end in overlap_regions:
+    for ov_start, ov_end in filtered:
         padded_start = max(ov_start - padding, audio_start)
         padded_end = min(ov_end + padding, audio_end)
         padded.append((padded_start, padded_end, (ov_start, ov_end)))
@@ -114,8 +119,9 @@ def _map_local_to_global_speakers(
 ) -> dict[str, str]:
     """Map PixIT's local speaker labels to global diarization speaker IDs.
 
-    Uses temporal intersection voting: for each local speaker, find the global
-    speaker with the most temporal overlap.
+    Uses bipartite matching (Hungarian algorithm) to find the optimal 1:1
+    assignment that maximizes total temporal overlap between local and global
+    speakers. Falls back to greedy matching if scipy is unavailable.
 
     Args:
         local_labels: Speaker labels from PixIT output (e.g., ["A", "B"]).
@@ -125,20 +131,67 @@ def _map_local_to_global_speakers(
 
     Returns:
         Mapping from local label → global speaker ID.
+
+    Note:
+        When ``n_local > n_global``, only ``n_global`` pairs are returned.
+        Unmapped local labels are handled by the caller via ``dict.get(label, label)``
+        which falls back to the local label string.
     """
-    mapping: dict[str, str] = {}
+    if not local_labels or not global_speakers:
+        return {}
 
-    for label, (local_start, local_end) in zip(local_labels, local_times):
-        best_speaker = global_speakers[0] if global_speakers else label
-        best_overlap = 0.0
-        for seg in global_segs:
-            ov = max(0.0, min(local_end, seg.end_time) - max(local_start, seg.start_time))
-            if ov > best_overlap:
-                best_overlap = ov
-                best_speaker = seg.speaker_id
-        mapping[label] = best_speaker
+    n_local = len(local_labels)
+    n_global = len(global_speakers)
 
-    return mapping
+    # Build overlap matrix: cost[i][j] = negative overlap (Hungarian minimizes)
+    overlap_matrix = [[0.0] * n_global for _ in range(n_local)]
+
+    for i, (local_start, local_end) in enumerate(local_times):
+        for j, g_speaker in enumerate(global_speakers):
+            total_ov = 0.0
+            for seg in global_segs:
+                if seg.speaker_id == g_speaker:
+                    ov = max(0.0, min(local_end, seg.end_time) - max(local_start, seg.start_time))
+                    total_ov += ov
+            overlap_matrix[i][j] = total_ov
+
+    # Try Hungarian algorithm for optimal 1:1 matching
+    try:
+        from scipy.optimize import linear_sum_assignment
+        import numpy as np
+
+        cost = np.array(overlap_matrix)
+        # Negate because linear_sum_assignment minimizes cost
+        row_ind, col_ind = linear_sum_assignment(-cost)
+
+        mapping: dict[str, str] = {}
+        for r, c in zip(row_ind, col_ind):
+            if overlap_matrix[r][c] > 0:
+                mapping[local_labels[r]] = global_speakers[c]
+            else:
+                # No overlap at all — keep original label
+                mapping[local_labels[r]] = local_labels[r]
+        return mapping
+
+    except ImportError:
+        # Fallback: greedy with dedup
+        _logger.warning("scipy not available, using greedy speaker mapping")
+        used_global: set[str] = set()
+        mapping: dict[str, str] = {}
+
+        for i, label in enumerate(local_labels):
+            best_speaker = label
+            best_overlap = 0.0
+            for j, g_speaker in enumerate(global_speakers):
+                if g_speaker in used_global:
+                    continue
+                if overlap_matrix[i][j] > best_overlap:
+                    best_overlap = overlap_matrix[i][j]
+                    best_speaker = g_speaker
+            mapping[label] = best_speaker
+            used_global.add(best_speaker)
+
+        return mapping
 
 
 class OverlapSeparator:
@@ -334,15 +387,26 @@ class OverlapSeparator:
         # Step 5: For each separated speaker, run ASR
         result_segments: list[TranscriptSegment] = []
 
+        # Validate sources shape: (num_samples, num_speakers)
+        if sources.data.ndim != 2:
+            raise ValueError(
+                f"Expected 2D sources array (samples, speakers), got shape {sources.data.shape}"
+            )
+        if sources.data.shape[1] != len(local_labels):
+            raise ValueError(
+                f"Sources has {sources.data.shape[1]} speakers but got {len(local_labels)} labels"
+            )
+
         for s_idx, label in enumerate(local_labels):
             global_speaker = speaker_map.get(label, label)
 
             # Extract this speaker's separated audio
             # PixIT returns sources.data as (num_samples, num_speakers) waveform array
             separated_waveform = sources.data[:, s_idx].copy()
-            assert separated_waveform.ndim == 1, (
-                f"Expected 1D waveform for speaker {s_idx}, got shape {separated_waveform.shape}"
-            )
+            if separated_waveform.ndim != 1:
+                raise ValueError(
+                    f"Expected 1D waveform for speaker {s_idx}, got shape {separated_waveform.shape}"
+                )
             separated_audio = AudioSegment(
                 waveform=separated_waveform,
                 sample_rate=clip.sample_rate,
@@ -376,5 +440,8 @@ class OverlapSeparator:
     def cleanup(self) -> None:
         """Release PixIT model from GPU/CPU memory."""
         self._pipeline = None
-        if self._device != "cpu" and torch.cuda.is_available():
-            torch.cuda.empty_cache()
+        if self._device != "cpu":
+            import torch
+
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()

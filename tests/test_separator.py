@@ -68,6 +68,14 @@ class TestExtractOverlapClips:
         assert len(clips) == 1
         assert clips[0].source_overlaps == [(5.0, 8.0), (9.0, 11.0)]
 
+    def test_zero_duration_overlaps_filtered(self):
+        """Zero-duration overlap regions should be silently ignored."""
+        audio = _make_audio(30.0)
+        clips = extract_overlap_clips(audio, overlap_regions=[(10.0, 10.0), (10.0, 12.0)], padding=3.0)
+        # Only (10.0, 12.0) should produce a clip; (10.0, 10.0) is filtered
+        assert len(clips) == 1
+        assert clips[0].source_overlaps == [(10.0, 12.0)]
+
     def test_audio_start_offset_respected(self):
         waveform = np.random.randn(16000 * 30).astype(np.float32) * 0.1
         audio = AudioSegment(waveform=waveform, sample_rate=16000, start_time=60.0, end_time=90.0)
@@ -153,6 +161,26 @@ class TestMapLocalToGlobalSpeakers:
         )
         assert mapping["A"] == "SPEAKER_00"
         assert mapping["B"] == "SPEAKER_01"
+
+    def test_no_duplicate_global_mapping(self):
+        """Bipartite matching should prevent two locals from mapping to the same global."""
+        local_labels = ["A", "B"]
+        global_speakers = ["SPEAKER_00", "SPEAKER_01"]
+        # Both A and B overlap more with SPEAKER_00, but bipartite matching
+        # should assign them to different globals.
+        mapping = _map_local_to_global_speakers(
+            local_labels=local_labels,
+            local_times=[(0.0, 10.0), (0.0, 10.0)],
+            global_speakers=global_speakers,
+            global_segs=[
+                MagicMock(speaker_id="SPEAKER_00", start_time=0.0, end_time=10.0),
+                MagicMock(speaker_id="SPEAKER_01", start_time=0.0, end_time=2.0),
+            ],
+        )
+        # Both locals map to different globals (bipartite ensures 1:1)
+        assert len(set(mapping.values())) == len(mapping)
+        # All mapped values are valid global speakers
+        assert set(mapping.values()) <= set(global_speakers)
 
 
 def _make_clip(start: float = 0.0, end: float = 10.0, sr: int = 16000) -> OverlapClip:

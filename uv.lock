@@ -2456,7 +2456,12 @@ qwen-asr = [
     { name = "transformers" },
 ]
 separate = [
+    { name = "addict" },
+    { name = "modelscope" },
     { name = "pyannote-audio", extra = ["separation"] },
+    { name = "scipy", version = "1.15.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "simplejson" },
 ]
 
 [package.metadata]
@@ -2467,6 +2472,7 @@ requires-dist = [
     { name = "librosa", marker = "extra == 'qwen-asr'" },
     { name = "modelscope", marker = "extra == 'diarize'" },
     { name = "modelscope", marker = "extra == 'funasr'" },
+    { name = "multi-speaker-transcribe", extras = ["diarize"], marker = "extra == 'separate'" },
     { name = "multi-speaker-transcribe", extras = ["funasr", "diarize", "qwen-asr", "separate"], marker = "extra == 'all'" },
     { name = "numpy" },
     { name = "pyannote-audio", marker = "extra == 'diarize'", specifier = ">=4.0.4" },

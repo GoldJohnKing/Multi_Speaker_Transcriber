@@ -10,6 +10,7 @@
 - 全程 16kHz 统一采样率，无重采样损耗
 - 说话人声纹参考匹配，通过参考音频自动标注说话人姓名
 - 热词增强 + 标点修复，提高领域专有词汇识别率
+- 重叠语音分离（PixIT），对说话人重叠区域独立分离再识别
 
 ## 目录
 
@@ -21,6 +22,7 @@
 - [项目结构](#项目结构)
 - [开源依赖](#开源依赖)
 - [说话人参考音频](#说话人参考音频)
+- [重叠语音分离](#重叠语音分离)
 - [开发与测试](#开发与测试)
 
 ---
@@ -60,6 +62,7 @@ uv sync --extra all
 | `funasr` | `uv sync --extra funasr` | 语音识别 — FunASR + PyTorch |
 | `qwen-asr` | `uv sync --extra qwen-asr` | 语音识别 — Qwen3-ASR + PyTorch |
 | `diarize` | `uv sync --extra diarize` | 说话人识别 + 声纹匹配（Pyannote + ModelScope + scipy） |
+| `separate` | `uv sync --extra separate` | 重叠语音分离（需同时安装 `diarize`） |
 | `all` | `uv sync --extra all` | 全部功能 |
 
 ### Pyannote 说话人识别（HF Token）
@@ -78,6 +81,13 @@ export HF_TOKEN="hf_xxxxxxxx"
 # diarizer:
 #   hf_token: "hf_xxxxxxxx"
 ```
+
+### 语音分离模型（可选）
+
+启用 `--separate` 重叠语音分离时，使用 Pyannote PixIT 语音分离模型，需要额外申请 HuggingFace 访问权限：
+
+1. 在 [huggingface.co/pyannote/speech-separation-ami-1.0](https://huggingface.co/pyannote/speech-separation-ami-1.0) 接受用户协议
+2. 使用与说话人识别相同的 `HF_TOKEN` 即可
 
 ---
 
@@ -98,6 +108,9 @@ uv run python -m transcribe input.mp4 --hotwords hotwords/example.txt -o output.
 
 # 使用参考音频自动标注说话人姓名
 uv run python -m transcribe input.mp4 --speaker-ref speakers/ -o output.srt -v
+
+# 启用重叠语音分离（对说话人重叠区域独立分离再识别）
+uv run python -m transcribe input.mp4 --separate -o output.srt -v
 
 # 选择 ASR 后端（默认 Fun-ASR-Nano）
 uv run python -m transcribe input.mp4 --backend Qwen3-ASR -o output.srt -v
@@ -126,7 +139,8 @@ uv run python -m transcribe input.mp4 --backend Fun-ASR-Paraformer -o output.srt
 
 ```
 usage: transcribe [-h] [-o OUTPUT] [--hotwords FILE] [--num-speakers N]
-                  [--no-diarize] [--speaker-ref DIR]
+                  [--no-diarize] [--separate] [--separation-padding SEC]
+                  [--speaker-ref DIR]
                   [--backend {Fun-ASR-Paraformer,Fun-ASR-Nano,Qwen3-ASR}]
                   [--device {cpu,cuda,auto}] [--cache-dir DIR]
                   [--config FILE] [--keep-cache] [-v]
@@ -140,6 +154,8 @@ usage: transcribe [-h] [-o OUTPUT] [--hotwords FILE] [--num-speakers N]
   --hotwords FILE        热词文件路径（每行一个词）
   --num-speakers N       已知说话人数量（默认自动检测）
   --no-diarize           禁用说话人识别（纯 ASR 模式）
+  --separate             启用重叠语音分离（需要 --diarize，默认关闭）
+  --separation-padding   重叠片段上下文填充秒数（默认 3.0）
   --speaker-ref DIR      说话人参考音频目录（文件名即说话人名）
   --backend BACKEND      ASR 后端：Fun-ASR-Paraformer / Fun-ASR-Nano / Qwen3-ASR（默认 Fun-ASR-Nano）
   --device DEVICE        计算设备：cpu / cuda / auto（默认 auto）
@@ -155,6 +171,7 @@ usage: transcribe [-h] [-o OUTPUT] [--hotwords FILE] [--num-speakers N]
 |----------|------|
 | （无标志） | ASR + 说话人识别，输出 `[说话人N]` 标签 |
 | `--no-diarize` | 纯 ASR，无说话人标签，速度最快 |
+| `--separate` | 说话人识别 + 重叠区域分离再识别（需要说话人识别） |
 | `--speaker-ref DIR` | 说话人识别后，通过参考音频将 `[说话人N]` 替换为实际姓名 |
 | `--speaker-ref` + `--no-diarize` | 参考匹配跳过（需说话人识别） |
 
@@ -172,27 +189,40 @@ usage: transcribe [-h] [-o OUTPUT] [--hotwords FILE] [--num-speakers N]
                 │
                 ▼
 ┌─────────────────────────────────┐
-│  Stage 2: 说话人识别            │  Pyannote 4.0 Community-1
-│  (默认启用, --no-diarize 关闭)  │  输出: 说话人片段 + 重叠区域
-└───────────────┬─────────────────┘
-                │
-                ▼
-┌─────────────────────────────────┐
-│  Stage 2.5: 说话人参考匹配     │  ERes2NetV2 (3D-Speaker)
-│  (--speaker-ref DIR)            │  多段加权嵌入 + 匈牙利算法匹配
-│  将 SPEAKER_XX 映射为实际姓名   │  需要 Stage 2 已启用
-└───────────────┬─────────────────┘
-                │
-                ▼
-┌─────────────────────────────────┐
-│  Stage 3: 语音识别 (ASR)       │  Fun-ASR-Nano (默认)
-│  热词增强 + 标点修复           │  或 Fun-ASR-Paraformer
+│  Stage 2: 语音识别 (ASR)       │  Fun-ASR-Nano (默认)
+│  全音频词级识别                 │  或 Fun-ASR-Paraformer
 │  --backend 选择后端           │  或 Qwen3-ASR
 └───────────────┬─────────────────┘
                 │
                 ▼
 ┌─────────────────────────────────┐
-│  Stage 4: SRT 生成             │  合并相邻片段 → 输出 SRT
+│  Stage 3: 字幕分割             │  标点 + 时长混合策略
+│  词级 → 字幕片段               │  五遍精调管线
+└───────────────┬─────────────────┘
+                │
+                ▼
+┌─────────────────────────────────┐
+│  Stage 4: 说话人识别 + 归因    │  Pyannote 4.0 Community-1
+│  (默认启用, --no-diarize 关闭)  │  输出: 说话人片段 + 重叠区域
+└───────────────┬─────────────────┘
+                │
+                ▼
+┌─────────────────────────────────┐
+│  Stage 4.5: 重叠语音分离       │  Pyannote PixIT (可选)
+│  (--separate 启用)             │  分离重叠说话人 → 独立 ASR
+│  需要说话人识别 (Stage 4)      │  替换重叠区域的原始字幕
+└───────────────┬─────────────────┘
+                │
+                ▼
+┌─────────────────────────────────┐
+│  Stage 5: 说话人参考匹配       │  ERes2NetV2 (3D-Speaker)
+│  (--speaker-ref DIR)            │  多段加权嵌入 + 匈牙利算法匹配
+│  将 SPEAKER_XX 映射为实际姓名   │  需要 Stage 4 已启用
+└───────────────┬─────────────────┘
+                │
+                ▼
+┌─────────────────────────────────┐
+│  Stage 6: SRT 生成             │  合并相邻片段 → 输出 SRT
 │  说话人标签 + 时间戳对齐       │
 └─────────────────────────────────┘
 ```
@@ -200,14 +230,21 @@ usage: transcribe [-h] [-o OUTPUT] [--hotwords FILE] [--num-speakers N]
 ### 数据流
 
 ```
-AudioSegment ──→ DiarizationResult ──→ (--speaker-ref)
-                 (SpeakerSegment[])     SPEAKER_XX → 实际姓名
-                        │
-                        ▼
-               TranscriptSegment[]
-                        │
-                        ▼
-                     SRT 文件
+AudioSegment ──→ WordTimestamp[] ──→ TranscriptSegment[]
+                     │                    │
+                     ▼                    ▼
+              DiarizationResult    说话人归因 + 字幕分割
+              (SpeakerSegment[])          │
+              + overlap_regions            ▼
+                     │             (--separate)
+                     ▼               │
+              说话人归因 ←──────────┘
+                     │
+              (--speaker-ref)
+              SPEAKER_XX → 实际姓名
+                     │
+                     ▼
+                  SRT 文件
 ```
 
 ### 各阶段详解
@@ -215,13 +252,8 @@ AudioSegment ──→ DiarizationResult ──→ (--speaker-ref)
 #### Stage 1 — 音频提取
 使用 FFmpeg 将任意格式的视频/音频转为 16kHz 单声道 float32 WAV。支持 MP4、MKV、AVI、MP3、WAV 等常见格式。
 
-#### Stage 2 — 说话人识别
-使用 Pyannote Audio 4.0 Community-1 模型进行说话人分割（CC-BY-4.0 许可）。输出每个说话人的时间片段（`SpeakerSegment`）及重叠区域列表（`overlap_regions`）。支持 `--num-speakers` 提示已知说话人数量以提高准确性。
-
-#### Stage 2.5 — 说话人参考匹配（可选，`--speaker-ref DIR`）
-当提供说话人参考音频目录时，使用 ERes2NetV2（3D-Speaker）提取 192 维声纹嵌入。对每个说话人，从最长 3 个非重叠片段中提取嵌入并计算时长加权平均值，然后通过匈牙利算法（`scipy.optimize.linear_sum_assignment`）进行全局最优 1:1 匹配，将匿名说话人标签（`SPEAKER_00` 等）关联到参考音频文件名（即说话人姓名）。例如目录下放置 `张三.wav`、`李四.wav`，输出中将显示 `[张三]`、`[李四]` 而非 `[说话人1]`、`[说话人2]`。此阶段需要说话人识别（Stage 2）已启用。
-
-#### Stage 3 — 语音识别
+#### Stage 2 — 语音识别（ASR-First）
+对完整音频进行全音频词级识别，产出带时间戳的词序列（`WordTimestamp[]`）。此阶段在说话人识别之前运行（ASR-First 架构），确保识别质量不受分段影响。
 
 支持三种 ASR 后端，通过 `--backend` 参数选择：
 
@@ -233,9 +265,28 @@ AudioSegment ──→ DiarizationResult ──→ (--speaker-ref)
 
 **Qwen3-ASR** — 基于 Qwen3 LLM 的语音识别模型（1.7B），配合 Qwen3-ForcedAligner（0.6B）提供字符级时间戳。在中文基准测试中达到 SOTA 准确率（AISHELL-2 CER 2.71%），支持 30+ 语言和 22 种中文方言。热词通过 `context` 参数以 LLM prompt 方式注入。无内置 VAD，字幕分段由 `segment_by_timestamps()` 实现（标点 + 时长混合策略）。VRAM 需求较高（~7 GB）。
 
-在说话人识别模式下，每个说话人片段独立送入 ASR；在 `--no-diarize` 模式下，整段音频作为单一说话人转录。所有后端的字幕输出统一移除句末标点（。！？），逗号级标点保留在字幕行内。
+#### Stage 3 — 字幕分割
+将词级时间戳转换为字幕片段（`TranscriptSegment[]`）。使用五遍精调管线（Pass 1-5）：句子分割 → 最短时长合并 → 逗号级切分 → 时长/行宽约束 → 跨说话人边界处理。句末标点（。！？）在字幕行间移除，逗号级标点保留在行内。
 
-#### Stage 4 — SRT 生成
+#### Stage 4 — 说话人识别 + 归因
+使用 Pyannote Audio 4.0 Community-1 模型进行说话人分割（CC-BY-4.0 许可）。输出每个说话人的时间片段（`SpeakerSegment`）及重叠区域列表（`overlap_regions`）。支持 `--num-speakers` 提示已知说话人数量以提高准确性。通过词级时间戳与说话人片段的时间交集投票，将说话人标签归因到每个字幕片段。
+
+#### Stage 4.5 — 重叠语音分离（可选，`--separate`）
+当说话人识别检测到重叠区域时，使用 Pyannote PixIT 语音分离模型将重叠的多个说话人分离为独立音频流，然后对每条流分别运行 ASR 识别。具体流程：
+
+1. 提取重叠区域音频片段，附带上下文填充（默认 3 秒）
+2. 通过 PixIT 分离为多条单说话人音频
+3. 将 PixIT 的局部说话人标签映射为全局说话人 ID（时间交集投票）
+4. 对每条分离流独立运行 ASR
+5. 裁剪词级结果到重叠区域，生成字幕片段
+6. 替换原始管线中重叠区域的字幕
+
+模型加载失败时（如未申请访问权限、网络错误）会优雅降级，跳过分离步骤并输出警告。此阶段需要说话人识别（Stage 4）已启用，需要单独安装 `separate` 依赖组并在 HuggingFace 申请 PixIT 模型访问权限。
+
+#### Stage 5 — 说话人参考匹配（可选，`--speaker-ref DIR`）
+当提供说话人参考音频目录时，使用 ERes2NetV2（3D-Speaker）提取 192 维声纹嵌入。对每个说话人，从最长 3 个非重叠片段中提取嵌入并计算时长加权平均值，然后通过匈牙利算法（`scipy.optimize.linear_sum_assignment`）进行全局最优 1:1 匹配，将匿名说话人标签（`SPEAKER_00` 等）关联到参考音频文件名（即说话人姓名）。例如目录下放置 `张三.wav`、`李四.wav`，输出中将显示 `[张三]`、`[李四]` 而非 `[说话人1]`、`[说话人2]`。此阶段需要说话人识别（Stage 4）已启用。
+
+#### Stage 6 — SRT 生成
 将转录片段排序、合并相邻同说话人片段，生成标准 SRT 字幕文件。说话人标签格式默认为 `[说话人1]`、`[说话人2]` 等；若提供了 `--speaker-ref` 参考音频，则替换为实际姓名（如 `[张三]`、`[李四]`）。
 
 ---
@@ -250,6 +301,8 @@ backend: Fun-ASR-Nano     # ASR 后端: Fun-ASR-Paraformer / Fun-ASR-Nano / Qwen
 diarize: true             # 说话人识别
 language: zh              # 语言（当前仅支持中文）
 speaker_references: null  # 说话人参考音频目录路径
+separate: false           # 重叠语音分离（需要 diarize: true）
+separation_padding: 3.0   # 重叠片段上下文填充秒数
 
 diarizer:
   model: pyannote/speaker-diarization-community-1
@@ -297,9 +350,11 @@ Multi_Speaker_Transcribe/
 │   │   └── __init__.py
 │   └── models/
 │       ├── audio_extractor.py         # Stage 1: FFmpeg 音频提取
-│       ├── diarizer.py                # Stage 2: Pyannote 说话人识别
-│       ├── matcher.py                 # Stage 2.5: 声纹嵌入匹配
-│       ├── asr/                       # Stage 3: ASR 后端包
+│       ├── diarizer.py                # Stage 4: Pyannote 说话人识别
+│       ├── attribution.py             # Stage 4: 说话人归因
+│       ├── separator.py               # Stage 4.5: 重叠语音分离 (PixIT)
+│       ├── matcher.py                 # Stage 5: 声纹嵌入匹配
+│       ├── asr/                       # Stage 2: ASR 后端包
 │       │   ├── __init__.py            #   注册 + 重导出
 │       │   ├── base.py                #   ASRBase 抽象基类
 │       │   ├── factory.py             #   create_asr 工厂函数
@@ -307,7 +362,8 @@ Multi_Speaker_Transcribe/
 │       │   ├── funasr_nano.py        #   Fun-ASR-Nano 后端
 │       │   ├── funasr_paraformer.py  #   Fun-ASR-Paraformer 后端
 │       │   └── qwen3_asr.py         #   Qwen3-ASR 后端
-│       ├── srt_writer.py             # Stage 4: SRT 生成
+│       ├── segmentation.py            # Stage 3: 字幕分割
+│       ├── srt_writer.py             # Stage 6: SRT 生成
 │       └── __init__.py
 ├── tests/                             # 测试目录
 ├── hotwords/                          # 热词文件目录
@@ -323,8 +379,9 @@ Multi_Speaker_Transcribe/
 | `AudioSegment` | 音频片段（waveform + 采样率 + 时间范围） |
 | `SpeakerSegment` | 说话人时间片段（说话人 ID + 起止时间 + 是否重叠） |
 | `DiarizationResult` | 说话人识别结果（片段列表 + 说话人数量 + 重叠区域） |
-| `TranscriptSegment` | 转录片段（说话人 ID + 起止时间 + 文本） |
-| `PipelineConfig` | 管线配置（含 `backend` 后端选择、`speaker_references` 参考音频目录） |
+| `WordTimestamp` | 词级时间戳（词文本 + 起止时间） |
+| `TranscriptSegment` | 转录片段（说话人 ID + 起止时间 + 文本 + 是否重叠） |
+| `PipelineConfig` | 管线配置（含 `backend` 后端选择、`separate` 重叠分离、`speaker_references` 参考音频目录） |
 
 ---
 
@@ -354,7 +411,47 @@ uv run python -m transcribe input.mp4 --speaker-ref speakers/ -o output.srt -v
 - 使用 ERes2NetV2（3D-Speaker / ModelScope）为每段参考音频提取 192 维声纹嵌入。该模型在 20 万中文说话人数据上训练，CN-Celeb EER 达 6.14%
 - 对说话人识别产生的每个说话人，从最长 3 个非重叠片段中提取嵌入并计算时长加权平均
 - 通过匈牙利算法进行全局最优 1:1 匹配，余弦相似度低于阈值（默认 0.5）的配对将被拒绝
-- 需要说话人识别（Stage 2）已启用；若使用 `--no-diarize`，参考匹配将跳过并发出警告
+- 需要说话人识别（Stage 4）已启用；若使用 `--no-diarize`，参考匹配将跳过并发出警告
+
+---
+
+## 重叠语音分离
+
+`--separate` 参数启用重叠语音分离功能，对说话人识别检测到的重叠区域使用 Pyannote PixIT 模型进行源分离，然后对分离后的每条独立音频流分别运行 ASR，以获得重叠区域中每个说话人的准确转录。
+
+### 前置条件
+
+1. 安装分离依赖组：`uv sync --extra separate`（或 `uv sync --extra all`）
+2. 在 [huggingface.co/pyannote/speech-separation-ami-1.0](https://huggingface.co/pyannote/speech-separation-ami-1.0) 接受用户协议
+3. 配置 `HF_TOKEN` 环境变量或 `config.yaml` 中的 `diarizer.hf_token`
+
+### 使用方法
+
+```bash
+uv run python -m transcribe input.mp4 --separate -o output.srt -v
+```
+
+### 工作原理
+
+1. 说话人识别（Stage 4）检测到重叠区域后，提取重叠片段音频并附加上下文填充（默认 3 秒）
+2. PixIT 模型将混合音频分离为多条单说话人音频流
+3. 通过时间交集投票将 PixIT 的局部说话人标签映射到全局说话人 ID
+4. 对每条分离流独立运行 ASR，裁剪结果到重叠区域
+5. 用分离后的字幕替换原始管线中重叠区域的字幕
+6. 模型加载失败时优雅降级，跳过分离并输出警告
+
+### 配置
+
+```bash
+# 调整上下文填充长度（默认 3.0 秒）
+uv run python -m transcribe input.mp4 --separate --separation-padding 5.0 -o output.srt -v
+```
+
+```yaml
+# config.yaml
+separate: true
+separation_padding: 5.0
+```
 
 ---
 
@@ -405,8 +502,11 @@ uv run pytest tests/test_srt_writer.py -v
 | `test_srt_writer.py` | SRT 生成（时间戳、标签、合并、排序） |
 | `test_asr.py` | 三后端注册 + 工厂 + 热词修复 + 时间戳解析 + 字幕分段 |
 | `test_qwen3_asr.py` | Qwen3-ASR 后端注册、热词加载、文本-时间戳对齐、mock 转写 |
+| `test_segmentation.py` | 字幕分割（五遍管线、跨说话人边界、时间戳对齐） |
 | `test_diarizer.py` | 说话人识别（mock） |
+| `test_attribution.py` | 说话人归因（词级时间戳交集投票） |
 | `test_matcher.py` | 声纹匹配（余弦相似度、参考匹配） |
+| `test_separator.py` | 重叠语音分离（片段提取、词裁剪、说话人映射、mock 分离） |
 | `test_pipeline_basic.py` | CLI 解析 + 基础管线 |
 | `test_pipeline_full.py` | 完整管线集成测试 |
 
@@ -432,6 +532,7 @@ uv run pytest tests/test_srt_writer.py -v
 | ASR | Fun-ASR-Nano (默认) | ~1-2 GB |
 | ASR | Fun-ASR-Paraformer | ~1-2 GB |
 | ASR | Qwen3-ASR | ~7 GB (ASR 5G + Aligner 2G) |
+| 重叠分离 | PixIT (--separate) | ~2-3 GB |
 
 管线在各阶段之间释放模型显存（`cleanup()`），避免同时加载所有模型。
 
