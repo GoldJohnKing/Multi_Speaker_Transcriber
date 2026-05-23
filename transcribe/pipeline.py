@@ -10,14 +10,18 @@ from transcribe.config import load_config, resolve_device
 from transcribe.data.types import (
     DiarizationResult,
     PipelineConfig,
+    TranscriptSegment,
 )
 from transcribe.models.audio_extractor import AudioExtractor
 from transcribe.models.asr import create_asr
 from transcribe.models.attribution import AttributionEngine
 from transcribe.models.diarizer import Diarizer
 from transcribe.models.matcher import SpeakerMatcher
+from transcribe.models.separator import OverlapSeparator
 from transcribe.models.segmentation import SubtitleSegmenter
 from transcribe.models.srt_writer import SrtWriter
+
+from dataclasses import replace as _replace
 
 console = Console()
 
@@ -26,6 +30,30 @@ _ASR_SAMPLE_RATE = 16_000
 
 def _default_output_path(input_path: str) -> str:
     return str(Path(input_path).with_suffix(".srt"))
+
+
+def _replace_overlap_segments(
+    main_segments: list[TranscriptSegment],
+    overlap_segments: list[TranscriptSegment],
+    overlap_regions: list[tuple[float, float]],
+) -> list[TranscriptSegment]:
+    """Replace main pipeline segments in overlap regions with separated segments.
+
+    Removes any main segment that substantially falls within an overlap region,
+    then inserts the separated per-speaker segments in chronological order.
+    """
+    from transcribe.models.attribution.overlap import OverlapHandler
+
+    # Remove main segments that overlap with overlap regions
+    kept: list[TranscriptSegment] = []
+    for seg in main_segments:
+        if not OverlapHandler._in_overlap(seg, overlap_regions):
+            kept.append(seg)
+
+    # Merge and sort by start time
+    merged = kept + overlap_segments
+    merged.sort(key=lambda s: s.start_time)
+    return merged
 
 
 def run_pipeline(
@@ -133,6 +161,40 @@ def run_pipeline(
                 f"{len(diarization.overlap_regions)} 个重叠区域 ... "
                 f"完成 ({time.time() - step_start:.1f}s)"
             )
+
+        # ── Stage 4.5: Overlap separation (optional) ────────────────
+        if config.separate and diarization.overlap_regions:
+            sep_step_start = time.time()
+            if verbose:
+                console.print("  重叠区域语音分离 ...", end=" ")
+
+            separator = OverlapSeparator(
+                device=device,
+                num_speakers=config.num_speakers,
+                padding=config.separation_padding,
+            )
+
+            # Reload ASR for per-speaker transcription
+            transcriber = create_asr(
+                config.backend, device=device, hotword_path=config.hotwords,
+            )
+
+            overlap_segments = separator.separate(audio, diarization, transcriber)
+
+            transcriber.cleanup()
+            separator.cleanup()
+
+            # Replace main pipeline's overlap-region segments
+            if overlap_segments:
+                all_segments = _replace_overlap_segments(
+                    all_segments, overlap_segments, diarization.overlap_regions,
+                )
+
+            if verbose:
+                console.print(
+                    f"分离出 {len(overlap_segments)} 条字幕 ... "
+                    f"完成 ({time.time() - sep_step_start:.1f}s)"
+                )
 
     # ── Stage 5: Speaker reference matching ─────────────────────────
     speaker_name_map: dict[str, str] = {}
