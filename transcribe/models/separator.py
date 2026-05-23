@@ -2,11 +2,9 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, replace
 
 import numpy as np
-
-import torch
 
 from transcribe.data.types import AudioSegment, DiarizationResult, TranscriptSegment, WordTimestamp
 from transcribe.models.segmentation import SubtitleSegmenter
@@ -169,6 +167,9 @@ class OverlapSeparator:
         """Load Pyannote SpeechSeparation pipeline."""
         import os
 
+        # Lazy import: torch only needed when separator is actually used
+        import torch  # noqa: F811
+
         # Apply same compatibility patches as diarizer
         from transcribe.models.diarizer import (
             _patch_torchaudio_for_pyannote,
@@ -237,7 +238,7 @@ class OverlapSeparator:
         asr_backend,
     ) -> list[TranscriptSegment]:
         """Process a single overlap clip: separate → ASR → trim → segment."""
-        from transcribe.data.types import DiarizationResult as _DR
+        import torch  # noqa: F811
 
         # Step 2: Run PixIT separation
         waveform_tensor = torch.tensor(clip.waveform, dtype=torch.float32)
@@ -289,7 +290,11 @@ class OverlapSeparator:
             global_speaker = speaker_map.get(label, label)
 
             # Extract this speaker's separated audio
+            # PixIT returns sources.data as (num_samples, num_speakers) waveform array
             separated_waveform = sources.data[:, s_idx].copy()
+            assert separated_waveform.ndim == 1, (
+                f"Expected 1D waveform for speaker {s_idx}, got shape {separated_waveform.shape}"
+            )
             separated_audio = AudioSegment(
                 waveform=separated_waveform,
                 sample_rate=clip.sample_rate,

@@ -39,15 +39,15 @@ def _replace_overlap_segments(
 ) -> list[TranscriptSegment]:
     """Replace main pipeline segments in overlap regions with separated segments.
 
-    Removes any main segment that substantially falls within an overlap region,
+    Removes any main segment whose midpoint falls within an overlap region
+    (more aggressive than the 50%-duration threshold used for detection),
     then inserts the separated per-speaker segments in chronological order.
     """
-    from transcribe.models.attribution.overlap import OverlapHandler
-
-    # Remove main segments that overlap with overlap regions
     kept: list[TranscriptSegment] = []
     for seg in main_segments:
-        if not OverlapHandler._in_overlap(seg, overlap_regions):
+        mid = (seg.start_time + seg.end_time) / 2.0
+        in_overlap = any(s <= mid < e for s, e in overlap_regions)
+        if not in_overlap:
             kept.append(seg)
 
     # Merge and sort by start time
