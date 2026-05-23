@@ -180,6 +180,10 @@ class OverlapSeparator:
         _patch_huggingface_hub_for_pyannote()
         _patch_torch_load_for_pyannote()
 
+        # Patch speechbrain compatibility: speechbrain 1.x passes `token`
+        # through **kwargs to Pretrained.__init__() which doesn't accept it.
+        self._patch_speechbrain_token()
+
         token = os.environ.get("HF_TOKEN")
 
         from pyannote.audio import Pipeline
@@ -187,6 +191,46 @@ class OverlapSeparator:
         if self._device != "cpu" and torch.cuda.is_available():
             pipeline = pipeline.to(torch.device(self._device))
         return pipeline
+
+    @staticmethod
+    def _patch_speechbrain_token() -> None:
+        """Monkey-patch speechbrain to handle extra kwargs from pyannote.
+
+        SpeechBrain 1.x ``pretrained_from_hparams()`` passes all kwargs
+        through to ``Pretrained.__init__()`` which only accepts ``modules``
+        and ``hparams``.  Pyannote passes ``token``, ``huggingface_cache_dir``,
+        and ``revision`` which cause ``TypeError``.  This patch pops those
+        kwargs before class instantiation.
+        """
+        try:
+            from speechbrain.inference import interfaces as _sb_iface
+        except ImportError:
+            return
+
+        if getattr(_sb_iface, "_token_patched", False):
+            return
+
+        _orig_pretrained = _sb_iface.pretrained_from_hparams
+
+        # kwargs not accepted by Pretrained.__init__()
+        _UNSUPPORTED_KWARGS = frozenset({
+            "token", "huggingface_cache_dir", "revision",
+        })
+
+        def _patched_pretrained(*args, **kwargs):
+            for key in _UNSUPPORTED_KWARGS:
+                kwargs.pop(key, None)
+            # speechbrain expects device as string, not torch.device
+            run_opts = kwargs.get("run_opts")
+            if isinstance(run_opts, dict) and "device" in run_opts:
+                import torch
+                dev = run_opts["device"]
+                if isinstance(dev, torch.device):
+                    run_opts["device"] = str(dev)
+            return _orig_pretrained(*args, **kwargs)
+
+        _sb_iface.pretrained_from_hparams = _patched_pretrained
+        _sb_iface._token_patched = True
 
     def separate(
         self,
