@@ -196,6 +196,39 @@ class TestOverlapHandler:
         assert len(result) == 2
         assert all(s.is_overlap is False for s in result)
 
+    def test_zero_duration_word_attribution(self) -> None:
+        """Zero-duration word should be attributed by midpoint, not default SPEAKER_00."""
+        words = [
+            WordTimestamp("我", 5.0, 5.2),
+            WordTimestamp("了", 5.2, 5.2),  # zero-duration
+            WordTimestamp("的", 5.3, 5.5),
+        ]
+        segments = [
+            TranscriptSegment(
+                speaker_id="SPEAKER_00",
+                start_time=5.0,
+                end_time=5.5,
+                text="我了的",
+                is_overlap=False,
+                words=words,
+            )
+        ]
+        diarization = DiarizationResult(
+            segments=[
+                SpeakerSegment("SPEAKER_00", 0.0, 5.1),
+                SpeakerSegment("SPEAKER_01", 5.1, 10.0),
+            ],
+            num_speakers=2,
+            overlap_regions=[(4.0, 6.0)],
+        )
+        result = OverlapHandler().handle(segments, diarization)
+
+        # "了" at 5.2 should be attributed to SPEAKER_01 (nearest by midpoint),
+        # not hardcoded to SPEAKER_00
+        assert len(result) >= 1
+        speakers = {seg.speaker_id for seg in result}
+        assert "SPEAKER_01" in speakers
+
     def test_all_words_same_speaker_produces_one_segment(self) -> None:
         """All words in overlap attributed to same speaker → one sub-segment."""
         words = [

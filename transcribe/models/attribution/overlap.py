@@ -94,7 +94,11 @@ class OverlapHandler:
         word: WordTimestamp,
         dia_segs: list[SpeakerSegment],
     ) -> str:
-        """Assign word to the speaker with the most temporal intersection."""
+        """Assign word to the speaker with the most temporal intersection.
+
+        Falls back to nearest speaker by midpoint when intersection is zero
+        for all speakers (e.g. zero-duration words).
+        """
         best_speaker = "SPEAKER_00"
         best_overlap = 0.0
         for dia in dia_segs:
@@ -104,7 +108,18 @@ class OverlapHandler:
             if overlap > best_overlap:
                 best_overlap = overlap
                 best_speaker = dia.speaker_id
-        return best_speaker
+
+        if best_overlap > 0.0:
+            return best_speaker
+
+        # Fallback: nearest speaker by midpoint distance
+        word_mid = (word.start_time + word.end_time) / 2.0
+        nearest = min(
+            dia_segs,
+            key=lambda d: abs((d.start_time + d.end_time) / 2.0 - word_mid),
+            default=None,
+        )
+        return nearest.speaker_id if nearest else best_speaker
 
     @staticmethod
     def _group_consecutive(
