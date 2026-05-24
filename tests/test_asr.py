@@ -28,11 +28,12 @@ def silence_audio() -> AudioSegment:
 
 
 def test_list_backends_contains_all() -> None:
-    """All three backends should be registered."""
+    """All four backends should be registered."""
     backends = list_backends()
     assert "Fun-ASR-Paraformer" in backends
     assert "Fun-ASR-Nano" in backends
     assert "Qwen3-ASR" in backends
+    assert "Whisper" in backends
 
 
 def test_create_asr_unknown_backend_raises() -> None:
