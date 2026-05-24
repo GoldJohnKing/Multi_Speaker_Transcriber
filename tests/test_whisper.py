@@ -45,7 +45,7 @@ def test_import_error_without_faster_whisper() -> None:
     from transcribe.models.asr.whisper import WhisperTranscriber
 
     with patch.dict(sys.modules, {"faster_whisper": None}):
-        with pytest.raises(ImportError, match="uv sync --extra whisper"):
+        with pytest.raises(ImportError, match="uv sync"):
             WhisperTranscriber(device="cpu")
 
 

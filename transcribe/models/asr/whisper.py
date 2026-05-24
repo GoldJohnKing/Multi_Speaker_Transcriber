@@ -16,7 +16,7 @@ class WhisperTranscriber(ASRBase):
     and built-in Silero VAD for automatic segmentation. Supports 99 languages
     with automatic language detection.
 
-    Requires the ``whisper`` optional dependency group.
+    Requires the core dependencies (installed via ``uv sync``).
     """
 
     def __init__(
@@ -33,7 +33,7 @@ class WhisperTranscriber(ASRBase):
         except ImportError:
             raise ImportError(
                 "Whisper 后端需要 faster-whisper 包。"
-                "请运行: uv sync --extra whisper"
+                "请运行: uv sync"
             )
 
         self._device = device

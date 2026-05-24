@@ -41,9 +41,9 @@
 git clone <repo-url>
 cd Multi_Speaker_Transcribe
 
-# 2. 安装全部依赖（含 ASR、识别、声纹匹配）
+# 2. 安装依赖（含 ASR、识别、声纹匹配）
 # PyTorch 会自动从 CPU 索引安装，无需手动操作
-uv sync --extra all
+uv sync
 
 # （可选）切换到 CUDA 版 PyTorch：
 # 编辑 pyproject.toml，将 pytorch-cpu 索引 URL 改为：
@@ -53,14 +53,7 @@ uv sync --extra all
 
 ### 按需安装
 
-如果只需部分功能，可以按需安装可选依赖组：
-
-| 依赖组 | 命令 | 包含功能 |
-|--------|------|----------|
-| `funasr` | `uv sync --extra funasr` | 语音识别 — FunASR + PyTorch |
-| `qwen-asr` | `uv sync --extra qwen-asr` | 语音识别 — Qwen3-ASR + PyTorch |
-| `diarize` | `uv sync --extra diarize` | 说话人识别 + 声纹匹配（Pyannote + ModelScope + scipy） |
-| `all` | `uv sync --extra all` | 全部功能 |
+所有依赖（ASR 后端、说话人识别、声纹匹配）已包含在核心依赖中，`uv sync` 即可安装。
 
 ### Pyannote 说话人识别（HF Token）
 
@@ -383,7 +376,7 @@ uv run python -m transcribe input.mp4 --speaker-ref speakers/ -o output.srt -v
 
 ```bash
 # 安装开发依赖
-uv sync --extra all --extra dev
+uv sync --extra dev
 
 # 运行全部测试
 uv run pytest

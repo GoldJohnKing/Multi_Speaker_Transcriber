@@ -8,43 +8,27 @@ dependencies = [
     "pyyaml",
     "rich",
     "soundfile",
-]
-
-[project.optional-dependencies]
-# ─── ASR backends ───
-funasr = [
+    # ASR: FunASR
     "funasr @ git+https://github.com/modelscope/FunASR.git@2ca745e5d11ad9650b94691d0d346d1435dc9b63",
     "modelscope",
     "tiktoken",
     "torch>=2.8",
     "torchaudio>=2.8",
-    "transformers",
-]
-qwen-asr = [
-    "qwen-asr",
-    "torch>=2.8",
-    "torchaudio>=2.8",
     "transformers>=4.45",
+    # ASR: Qwen3-ASR
+    "qwen-asr",
     "accelerate",
     "librosa",
-]
-whisper = [
+    # ASR: Whisper
     "faster-whisper>=1.0",
-]
-
-# ─── Diarization ───
-diarize = [
+    # Diarization
     "addict",
-    "modelscope",
     "pyannote.audio>=4.0.4",
     "scipy",
     "simplejson",
 ]
 
-# ─── Convenience ───
-all = [
-    "multi-speaker-transcribe[funasr,diarize,qwen-asr,whisper]",
-]
+[project.optional-dependencies]
 dev = [
     "pytest>=8.0",
 ]

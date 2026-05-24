@@ -12,9 +12,9 @@
 本项目使用 **uv** 而非 pip/poetry 管理依赖。所有安装、运行、测试命令均通过 uv 执行：
 
 ```bash
-uv sync --extra all          # 安装全部可选依赖
-uv run python -m transcribe  # 运行管线
-uv run pytest                # 运行测试
+uv sync                       # 安装依赖
+uv run python -m transcribe   # 运行管线
+uv run pytest                 # 运行测试
 ```
 
 **不要**使用 `pip install` 直接安装项目依赖，应使用 `uv sync` 或 `uv pip install`。
@@ -25,13 +25,8 @@ uv run pytest                # 运行测试
 
 | 类型 | 安装命令 | 说明 |
 |------|----------|------|
-| 核心 | `uv sync` | numpy, pyyaml, rich, soundfile（始终安装） |
-| `funasr` | `uv sync --extra funasr` | FunASR, torch, torchaudio, modelscope |
-| `qwen-asr` | `uv sync --extra qwen-asr` | qwen-asr, torch, torchaudio, transformers, accelerate |
-| `whisper` | `uv sync --extra whisper` | faster-whisper (CTranslate2, 无 PyTorch) |
-| `diarize` | `uv sync --extra diarize` | pyannote.audio, scipy, modelscope |
-| `all` | `uv sync --extra all` | 以上全部 |
-| `dev` | `uv sync --extra dev` | pytest（通常与 `--extra all` 组合） |
+| 核心 | `uv sync` | 全部依赖（ASR 后端 + 说话人识别 + 声纹匹配） |
+| `dev` | `uv sync --extra dev` | pytest（通常与核心组合） |
 
 ### PyTorch 安装
 
