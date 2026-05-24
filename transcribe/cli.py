@@ -40,7 +40,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--backend",
-        choices=["Fun-ASR-Paraformer", "Fun-ASR-Nano", "Qwen3-ASR"],
+        choices=["Fun-ASR-Paraformer", "Fun-ASR-Nano", "Qwen3-ASR", "Whisper"],
         default="Fun-ASR-Nano",
         help="ASR backend (default: Fun-ASR-Nano)",
     )
