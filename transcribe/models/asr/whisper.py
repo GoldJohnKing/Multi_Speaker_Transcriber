@@ -25,7 +25,7 @@ class WhisperTranscriber(ASRBase):
         hotword_path: str | None = None,
         *,
         model_size: str = "large-v3",
-        language: str | None = None,
+        language: str | None = "zh",
         compute_type: str | None = None,
     ) -> None:
         try:
