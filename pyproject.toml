@@ -28,6 +28,9 @@ qwen-asr = [
     "accelerate",
     "librosa",
 ]
+whisper = [
+    "faster-whisper>=1.0",
+]
 
 # ─── Diarization ───
 diarize = [
@@ -40,7 +43,7 @@ diarize = [
 
 # ─── Convenience ───
 all = [
-    "multi-speaker-transcribe[funasr,diarize,qwen-asr]",
+    "multi-speaker-transcribe[funasr,diarize,qwen-asr,whisper]",
 ]
 dev = [
     "pytest>=8.0",
