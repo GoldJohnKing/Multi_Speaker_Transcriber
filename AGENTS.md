@@ -28,6 +28,7 @@ uv run pytest                # 运行测试
 | 核心 | `uv sync` | numpy, pyyaml, rich, soundfile（始终安装） |
 | `funasr` | `uv sync --extra funasr` | FunASR, torch, torchaudio, modelscope |
 | `qwen-asr` | `uv sync --extra qwen-asr` | qwen-asr, torch, torchaudio, transformers, accelerate |
+| `whisper` | `uv sync --extra whisper` | faster-whisper (CTranslate2, 无 PyTorch) |
 | `diarize` | `uv sync --extra diarize` | pyannote.audio, scipy, modelscope |
 | `all` | `uv sync --extra all` | 以上全部 |
 | `dev` | `uv sync --extra dev` | pytest（通常与 `--extra all` 组合） |
@@ -75,7 +76,8 @@ transcribe/
         ├── utils.py            # 共享工具（热词修复、时间戳解析、字幕分段）
         ├── funasr_nano.py      # Fun-ASR-Nano 后端
         ├── funasr_paraformer.py # Fun-ASR-Paraformer 后端
-        └── qwen3_asr.py       # Qwen3-ASR 后端
+        ├── qwen3_asr.py       # Qwen3-ASR 后端
+        └── whisper.py          # Whisper 后端 (faster-whisper)
 ```
 
 - 每个模型类实现 `process()` / `extract()` / `transcribe()` 等方法，以及 `cleanup()` 用于释放 GPU 显存
@@ -91,8 +93,9 @@ transcribe/
 | Fun-ASR-Nano | FunAudioLLM/Fun-ASR-Nano-2512 | `hotwords=list[str]` 解码器偏置 | FSMN-VAD 分段 | VAD 分段 |
 | Fun-ASR-Paraformer | speech_seaco_paraformer_large | `hotword=str` 解码器偏置 | FSMN-VAD 分段 | VAD 分段 |
 | Qwen3-ASR | Qwen3-ASR-1.7B + ForcedAligner-0.6B | `context=str` LLM prompt 偏置 | ForcedAligner 字符级对齐 | 标点 + 时长混合分段 |
+| Whisper | large-v3 (faster-whisper/CTranslate2) | `hotwords=str` 原生热词偏置 | Silero VAD 分段 | VAD 分段 |
 
-- FunASR 后端内置 VAD 自动分段；Qwen3-ASR 无 VAD，使用 `segment_by_timestamps()` 混合分段策略
+- FunASR 和 Whisper 后端内置 VAD 自动分段；Qwen3-ASR 无 VAD，使用 `segment_by_timestamps()` 混合分段策略
 - Qwen3-ASR 的 `text` 含标点但 `time_stamps` 不含标点，需通过 `_align_text_to_timestamps()` 对齐
 - `segment_by_timestamps()` 在句末标点（。！？）处分段并移除标点；逗号级标点保留在字幕行内
 
