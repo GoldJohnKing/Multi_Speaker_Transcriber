@@ -14,6 +14,7 @@ from transcribe.data.types import (
 from transcribe.models.audio_extractor import AudioExtractor
 from transcribe.models.asr import create_asr
 from transcribe.models.attribution import AttributionEngine
+from transcribe.models.attribution.strategy import TimestampStrategy
 from transcribe.models.diarizer import Diarizer
 from transcribe.models.matcher import SpeakerMatcher
 from transcribe.models.segmentation import SubtitleSegmenter
@@ -78,37 +79,48 @@ def run_pipeline(
     if verbose:
         console.print(f"[{step}/{total_stages}] 语音转文字（全音频）...", end=" ")
     transcriber = create_asr(config.backend, device=device, hotword_path=config.hotwords)
-    words = transcriber.transcribe_words(audio)
-    transcriber.cleanup()
 
-    # Validate word-level timestamp quality for diarization pipeline
-    if config.diarize and words:
-        zero_dur_count = sum(1 for w in words if abs(w.end_time - w.start_time) < 1e-6)
-        zero_ratio = zero_dur_count / len(words) if words else 0
-        if zero_ratio > 0.8:
+    if transcriber.provides_segments:
+        # Backend produces subtitle-ready segments directly
+        all_segments = transcriber.transcribe(audio)
+        transcriber.cleanup()
+        if verbose:
+            console.print(f"识别 {len(all_segments)} 个段落 ... 完成 ({time.time() - step_start:.1f}s)")
+    else:
+        # Backend returns word-level timestamps; pipeline handles segmentation
+        words = transcriber.transcribe_words(audio)
+        transcriber.cleanup()
+
+        # Validate word-level timestamp quality for diarization pipeline
+        if config.diarize and words:
+            zero_dur_count = sum(1 for w in words if abs(w.end_time - w.start_time) < 1e-6)
+            zero_ratio = zero_dur_count / len(words) if words else 0
+            if zero_ratio > 0.8:
+                if verbose:
+                    console.print(
+                        f"\n[bold yellow]警告: {zero_dur_count}/{len(words)} 个词的时长为零，"
+                        "词级时间戳可能无效。重叠区域的说话人归因将严重受限。[/bold yellow]"
+                    )
+            elif verbose:
+                console.print(f"识别 {len(words)} 个词 ... 完成 ({time.time() - step_start:.1f}s)")
+        elif config.diarize and not words:
             if verbose:
                 console.print(
-                    f"\n[bold yellow]警告: {zero_dur_count}/{len(words)} 个词的时长为零，"
-                    "词级时间戳可能无效。重叠区域的说话人归因将严重受限。[/bold yellow]"
+                    "\n[bold yellow]警告: ASR 未产出任何词级时间戳，"
+                    "重叠处理和说话人归因将不可用。[/bold yellow]"
                 )
         elif verbose:
             console.print(f"识别 {len(words)} 个词 ... 完成 ({time.time() - step_start:.1f}s)")
-    elif config.diarize and not words:
-        if verbose:
-            console.print(
-                "\n[bold yellow]警告: ASR 未产出任何词级时间戳，"
-                "重叠处理和说话人归因将不可用。[/bold yellow]"
-            )
-    elif verbose:
-        console.print(f"识别 {len(words)} 个词 ... 完成 ({time.time() - step_start:.1f}s)")
 
     # ── Stage 3: Subtitle segmentation ──────────────────────────────
     step += 1
     step_start = time.time()
     if verbose:
         console.print(f"[{step}/{total_stages}] 字幕分割 ...", end=" ")
-    segmenter = SubtitleSegmenter()
-    all_segments = segmenter.segment(words)
+    if not transcriber.provides_segments:
+        segmenter = SubtitleSegmenter()
+        all_segments = segmenter.segment(words)
+    # else: all_segments already populated in Stage 2
     if verbose:
         console.print(f"{len(all_segments)} 条字幕 ... 完成 ({time.time() - step_start:.1f}s)")
 
@@ -124,8 +136,14 @@ def run_pipeline(
         diarization = diarizer.process(audio)
         diarizer.cleanup()
 
-        engine = AttributionEngine()
-        all_segments = engine.run(all_segments, diarization)
+        if transcriber.provides_segments:
+            # Simple dominant-speaker voting only — no turn splitting,
+            # no overlap handling. Preserves ASR's native segmentation.
+            strategy = TimestampStrategy()
+            all_segments = strategy.attribute(all_segments, diarization)
+        else:
+            engine = AttributionEngine()
+            all_segments = engine.run(all_segments, diarization)
 
         if verbose:
             console.print(

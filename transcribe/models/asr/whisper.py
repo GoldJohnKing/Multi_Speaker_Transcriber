@@ -136,6 +136,12 @@ class WhisperTranscriber(ASRBase):
 
         return words
 
+    @property
+    def provides_segments(self) -> bool:
+        """Whisper's built-in VAD + attention-based segmentation produces
+        sentence-level segments suitable for direct subtitle use."""
+        return True
+
     def cleanup(self) -> None:
         """Release model from memory."""
         del self._model

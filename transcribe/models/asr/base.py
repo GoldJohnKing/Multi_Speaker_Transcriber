@@ -67,6 +67,17 @@ class ASRBase(ABC):
         ...
 
     @property
+    def provides_segments(self) -> bool:
+        """Whether :meth:`transcribe` returns subtitle-ready segments.
+
+        When ``True``, the pipeline calls :meth:`transcribe` directly and
+        skips :class:`~transcribe.models.segmentation.SubtitleSegmenter`.
+        Speaker attribution uses simple dominant-speaker voting only
+        (no turn-boundary splitting or overlap handling).
+        """
+        return False
+
+    @property
     def supports_hotwords(self) -> bool:
         """Whether this backend supports hotword boosting."""
         return True
