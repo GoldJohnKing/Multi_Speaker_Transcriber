@@ -12,7 +12,7 @@
 本项目使用 **uv** 而非 pip/poetry 管理依赖。所有安装、运行、测试命令均通过 uv 执行：
 
 ```bash
-uv sync --extra all          # 安装全部可选依赖
+uv sync                     # 安装全部依赖
 uv run python -m transcribe  # 运行管线
 uv run pytest                # 运行测试
 ```
@@ -21,16 +21,12 @@ uv run pytest                # 运行测试
 
 ### 依赖结构
 
-依赖分核心依赖和可选依赖组，定义在 `pyproject.toml`：
+所有运行时依赖已整合为核心依赖，定义在 `pyproject.toml`，`uv sync` 即安装全部：
 
 | 类型 | 安装命令 | 说明 |
 |------|----------|------|
-| 核心 | `uv sync` | numpy, pyyaml, rich, soundfile（始终安装） |
-| `funasr` | `uv sync --extra funasr` | FunASR, torch, torchaudio, modelscope |
-| `qwen-asr` | `uv sync --extra qwen-asr` | qwen-asr, torch, torchaudio, transformers, accelerate |
-| `diarize` | `uv sync --extra diarize` | pyannote.audio, scipy, modelscope |
-| `all` | `uv sync --extra all` | 以上全部 |
-| `dev` | `uv sync --extra dev` | pytest（通常与 `--extra all` 组合） |
+| 核心 | `uv sync` | 全部运行时依赖（ASR、说话人识别、声纹匹配等） |
+| `dev` | `uv sync --extra dev` | pytest 开发依赖 |
 
 ### PyTorch 安装
 

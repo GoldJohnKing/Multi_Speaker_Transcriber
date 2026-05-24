@@ -92,7 +92,7 @@ class Qwen3ASRTranscriber(ASRBase):
         except ImportError:
             raise ImportError(
                 "Qwen3-ASR 后端需要 qwen-asr 包。"
-                "请运行: uv sync --extra qwen-asr"
+                "请运行: uv sync"
             )
 
         self._device = device

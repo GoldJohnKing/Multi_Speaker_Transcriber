@@ -38,7 +38,7 @@ def test_import_error_without_qwen_asr() -> None:
     from transcribe.models.asr.qwen3_asr import Qwen3ASRTranscriber
 
     with patch.dict(sys.modules, {"qwen_asr": None}):
-        with pytest.raises(ImportError, match="uv sync --extra qwen-asr"):
+        with pytest.raises(ImportError, match="uv sync"):
             Qwen3ASRTranscriber(device="cpu")
 
 

@@ -4,44 +4,26 @@ version = "0.1.0"
 description = "Offline multi-speaker audio transcription pipeline for Chinese Mandarin"
 requires-python = ">=3.10"
 dependencies = [
-    "numpy",
-    "pyyaml",
-    "rich",
-    "soundfile",
-]
-
-[project.optional-dependencies]
-# ─── ASR backends ───
-funasr = [
+    "accelerate",
+    "addict",
     "funasr @ git+https://github.com/modelscope/FunASR.git@2ca745e5d11ad9650b94691d0d346d1435dc9b63",
+    "librosa",
     "modelscope",
+    "numpy",
+    "pyannote.audio>=4.0.4",
+    "pyyaml",
+    "qwen-asr",
+    "rich",
+    "scipy",
+    "simplejson",
+    "soundfile",
     "tiktoken",
     "torch>=2.8",
     "torchaudio>=2.8",
-    "transformers",
-]
-qwen-asr = [
-    "qwen-asr",
-    "torch>=2.8",
-    "torchaudio>=2.8",
     "transformers>=4.45",
-    "accelerate",
-    "librosa",
 ]
 
-# ─── Diarization ───
-diarize = [
-    "addict",
-    "modelscope",
-    "pyannote.audio>=4.0.4",
-    "scipy",
-    "simplejson",
-]
-
-# ─── Convenience ───
-all = [
-    "multi-speaker-transcribe[funasr,diarize,qwen-asr]",
-]
+[project.optional-dependencies]
 dev = [
     "pytest>=8.0",
 ]
