@@ -9,7 +9,7 @@ from transcribe.models.asr.factory import create_asr, list_backends
 from transcribe.models.asr.utils import parse_timestamps, restore_hotwords, segment_by_timestamps
 
 # Import backend modules to trigger register_backend() calls
-from transcribe.models.asr import funasr_nano, funasr_paraformer, qwen3_asr  # noqa: F401
+from transcribe.models.asr import funasr_nano, funasr_paraformer, qwen3_asr, whisper  # noqa: F401
 
 __all__ = [
     "ASRBase",
