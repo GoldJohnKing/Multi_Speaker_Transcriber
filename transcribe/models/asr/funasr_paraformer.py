@@ -18,6 +18,11 @@ class FunASRParaformerTranscriber(ASRBase):
 
     Uses the paraformer-zh model with a separate ct-punc punctuation model.
     Timestamps are in Paraformer format (milliseconds, nested or flat lists).
+
+    With ``sentence_timestamp=True``, the model outputs per-sentence segments
+    via ``sentence_info``, which are mapped directly to ``TranscriptSegment``.
+    The pipeline skips ``SubtitleSegmenter`` and uses simple dominant-speaker
+    voting for attribution (same path as the Whisper backend).
     """
 
     def __init__(
@@ -63,46 +68,43 @@ class FunASRParaformerTranscriber(ASRBase):
         ]
         return (" ".join(words) if words else None), words
 
+    @property
+    def provides_segments(self) -> bool:
+        """Paraformer with ``sentence_timestamp=True`` produces per-sentence
+        segments suitable for direct subtitle use."""
+        return True
+
     def transcribe(self, audio: AudioSegment) -> list[TranscriptSegment]:
-        """Transcribe audio to text segments with timestamps."""
+        """Transcribe audio to text segments with timestamps.
+
+        Uses ``sentence_timestamp=True`` so that FunASR's internal
+        ``timestamp_sentence()`` splits the recognised text at punctuation
+        boundaries and returns per-sentence start/end times (in ms) via
+        ``sentence_info``.  Each entry is mapped directly to a
+        ``TranscriptSegment`` without further post-processing.
+        """
         result = self._model.generate(
             input=audio.waveform,
             batch_size_s=300,
             hotword=self._hotwords,
+            sentence_timestamp=True,
         )
 
-        segments: list[TranscriptSegment] = []
         if not result:
-            return segments
+            return []
 
-        for res in result:
-            text = res.get("text", "")
+        segments: list[TranscriptSegment] = []
+        for sent in result[0].get("sentence_info", []):
+            text = sent.get("text", "")
             if not text:
                 continue
-
-            timestamps = res.get("timestamp", [])
-
-            # Restore hotword terms broken by ct-punc punctuation insertion
             text = restore_hotwords(text, self._hotword_list)
-
-            # Parse timestamps — handles nested/flat ms formats
-            parsed_start, parsed_end = parse_timestamps(timestamps)
-
-            if parsed_start is not None and parsed_end is not None:
-                start_time = parsed_start + audio.start_time
-                end_time = parsed_end + audio.start_time
-            else:
-                start_time = audio.start_time
-                end_time = audio.end_time
-
-            segments.append(
-                TranscriptSegment(
-                    speaker_id="SPEAKER_00",
-                    start_time=start_time,
-                    end_time=end_time,
-                    text=text,
-                )
-            )
+            segments.append(TranscriptSegment(
+                speaker_id="SPEAKER_00",
+                start_time=sent["start"] / 1000.0 + audio.start_time,
+                end_time=sent["end"] / 1000.0 + audio.start_time,
+                text=text,
+            ))
 
         return segments
 
