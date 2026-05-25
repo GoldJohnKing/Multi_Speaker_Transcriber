@@ -117,7 +117,7 @@ def _find_reference_segments(
     diarization: DiarizationResult,
     max_segments: int = 3,
 ) -> dict[str, list[tuple[float, float]]]:
-    """Find the top-N longest non-overlap segments for each speaker.
+    """Find the top-N longest segments for each speaker.
 
     Args:
         diarization: Diarization result with speaker segments.
@@ -126,14 +126,12 @@ def _find_reference_segments(
     Returns:
         {speaker_id: [(start_time, end_time), ...]} with segments sorted
         by duration descending. Returns up to `max_segments` segments per
-        speaker. Falls back to overlap segments if no clean segment exists.
+        speaker.
     """
-    # Collect non-overlap segments per speaker, sorted by duration desc
+    # Collect segments per speaker, sorted by duration desc
     candidates: dict[str, list[tuple[float, float, float]]] = {}
 
     for seg in diarization.segments:
-        if seg.is_overlap:
-            continue
         duration = seg.end_time - seg.start_time
         if duration < _MIN_REF_SECONDS:
             continue
@@ -147,24 +145,6 @@ def _find_reference_segments(
     for speaker_id, segs in candidates.items():
         segs.sort(key=lambda x: x[2], reverse=True)
         result[speaker_id] = [(s, e) for s, e, _ in segs[:max_segments]]
-
-    # Fallback: speakers with no non-overlap segments get longest segment
-    # (may be an overlap segment; still enforce minimum duration)
-    all_speakers = {seg.speaker_id for seg in diarization.segments}
-    for speaker_id in all_speakers:
-        if speaker_id in result:
-            continue
-        best: tuple[float, float, float] | None = None
-        for seg in diarization.segments:
-            if seg.speaker_id != speaker_id:
-                continue
-            duration = seg.end_time - seg.start_time
-            if duration < _MIN_REF_SECONDS:
-                continue
-            if best is None or duration > best[2]:
-                best = (seg.start_time, seg.end_time, duration)
-        if best is not None:
-            result[speaker_id] = [(best[0], best[1])]
 
     return result
 

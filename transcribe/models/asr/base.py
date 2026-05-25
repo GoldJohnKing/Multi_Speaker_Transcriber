@@ -73,7 +73,7 @@ class ASRBase(ABC):
         When ``True``, the pipeline calls :meth:`transcribe` directly and
         skips :class:`~transcribe.models.segmentation.SubtitleSegmenter`.
         Speaker attribution uses simple dominant-speaker voting only
-        (no turn-boundary splitting or overlap handling).
+        (no turn-boundary splitting).
         """
         return False
 

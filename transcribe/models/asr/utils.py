@@ -107,17 +107,16 @@ def parse_timestamps(
 
 def segment_by_timestamps(
     char_ts: list[tuple[str, float, float]],
-    max_duration: float = 7.0,
-    max_chars: int = 25,
+    max_gap_sec: float = 0.6,
 ) -> list[TranscriptSegment]:
     """Split character-level timestamps into subtitle-grade segments.
 
-    Delegates to :class:`SubtitleSegmenter` for the actual segmentation.
+    Delegates to :class:`SubtitleSegmenter` (``punctuation_or_pause`` mode).
 
     Args:
         char_ts: ``[(text, start_sec, end_sec), ...]`` character-level timestamps.
-        max_duration: Maximum duration per subtitle segment (seconds).
-        max_chars: Maximum characters per subtitle segment.
+        max_gap_sec: Maximum gap (seconds) between consecutive words before
+            triggering a split.
 
     Returns:
         List of :class:`TranscriptSegment`.
@@ -132,5 +131,5 @@ def segment_by_timestamps(
         WordTimestamp(word=text, start_time=start, end_time=end)
         for text, start, end in char_ts
     ]
-    segmenter = SubtitleSegmenter(max_duration=max_duration, max_chars=max_chars)
+    segmenter = SubtitleSegmenter(max_gap_sec=max_gap_sec)
     return segmenter.segment(words)

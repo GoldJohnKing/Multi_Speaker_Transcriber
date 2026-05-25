@@ -142,25 +142,6 @@ class TestCustomSpeakerNames:
         assert "[说话人2]" in content
 
 
-class TestOverlapMarking:
-    def test_overlap_no_prefix(self, tmp_path: Path) -> None:
-        writer = SrtWriter(speaker_label=False)
-        out = str(tmp_path / "out.srt")
-        segments = [TranscriptSegment("SPEAKER_00", 0.0, 2.0, "你好", is_overlap=True)]
-        writer.write(segments, out)
-        content = _read_output(out)
-        assert "[重叠]" not in content
-        assert "你好" in content
-
-    def test_overlap_with_speaker_label(self, tmp_path: Path) -> None:
-        writer = SrtWriter(speaker_label=True)
-        out = str(tmp_path / "out.srt")
-        segments = [TranscriptSegment("SPEAKER_00", 0.0, 2.0, "你好", is_overlap=True)]
-        writer.write(segments, out)
-        content = _read_output(out)
-        assert "[说话人1] 你好" in content
-        assert "[重叠]" not in content
-
 
 class TestNoSplitting:
     def test_text_written_as_is(self, tmp_path: Path) -> None:
@@ -180,44 +161,3 @@ class TestNoSplitting:
         content = _read_output(out)
         assert "你好，世界" in content
 
-
-class TestSimultaneousDisplay:
-    def test_overlapping_segments_written_simultaneously(self, tmp_path: Path) -> None:
-        """Two segments with overlapping time ranges are both written."""
-        writer = SrtWriter(speaker_label=True)
-        out = str(tmp_path / "out.srt")
-        segments = [
-            TranscriptSegment("SPEAKER_00", 6.24, 8.40, "我突然自己了", is_overlap=True),
-            TranscriptSegment("SPEAKER_01", 8.16, 8.96, "开一个挂", is_overlap=True),
-        ]
-        writer.write(segments, out)
-        content = _read_output(out)
-        entries = _parse_srt_entries(content)
-
-        # Both entries should be present
-        assert len(entries) == 2
-
-        # First entry: SPEAKER_00
-        assert "[说话人1] 我突然自己了" in entries[0]["text"]
-        assert "00:00:06,240 --> 00:00:08,400" == entries[0]["timestamp"]
-
-        # Second entry: SPEAKER_01 (overlapping time range)
-        assert "[说话人2] 开一个挂" in entries[1]["text"]
-        assert "00:00:08,160 --> 00:00:08,960" == entries[1]["timestamp"]
-
-    def test_overlapping_segments_sorted_by_start_time(self, tmp_path: Path) -> None:
-        """Overlapping segments are sorted by start_time."""
-        writer = SrtWriter(speaker_label=True)
-        out = str(tmp_path / "out.srt")
-        # Pass in reverse order
-        segments = [
-            TranscriptSegment("SPEAKER_01", 8.16, 8.96, "开一个挂", is_overlap=True),
-            TranscriptSegment("SPEAKER_00", 6.24, 8.40, "我突然自己了", is_overlap=True),
-        ]
-        writer.write(segments, out)
-        content = _read_output(out)
-        entries = _parse_srt_entries(content)
-
-        # Should be sorted: earlier start_time first
-        assert "我突然自己了" in entries[0]["text"]
-        assert "开一个挂" in entries[1]["text"]

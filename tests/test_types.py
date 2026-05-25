@@ -57,24 +57,6 @@ class TestSpeakerSegment:
         assert seg.speaker_id == "SPEAKER_00"
         assert seg.start_time == 0.0
         assert seg.end_time == 2.5
-        assert seg.is_overlap is False  # default
-
-    def test_is_overlap_default_false(self) -> None:
-        seg = SpeakerSegment(
-            speaker_id="SPEAKER_01",
-            start_time=0.0,
-            end_time=1.0,
-        )
-        assert seg.is_overlap is False
-
-    def test_is_overlap_explicit_true(self) -> None:
-        seg = SpeakerSegment(
-            speaker_id="SPEAKER_01",
-            start_time=0.0,
-            end_time=1.0,
-            is_overlap=True,
-        )
-        assert seg.is_overlap is True
 
     def test_duration_property(self) -> None:
         seg = SpeakerSegment(
@@ -98,28 +80,6 @@ class TestDiarizationResult:
         result = DiarizationResult(segments=segments, num_speakers=2)
         assert result.num_speakers == 2
         assert len(result.segments) == 2
-        assert result.overlap_regions == []  # default
-
-    def test_overlap_regions(self) -> None:
-        result = DiarizationResult(
-            segments=[],
-            num_speakers=0,
-            overlap_regions=[(1.0, 2.0), (5.0, 6.5)],
-        )
-        assert len(result.overlap_regions) == 2
-        assert result.overlap_regions[0] == (1.0, 2.0)
-        assert result.overlap_regions[1] == (5.0, 6.5)
-
-    def test_default_overlap_regions(self) -> None:
-        result = DiarizationResult(segments=[], num_speakers=0)
-        assert result.overlap_regions == []
-
-    def test_default_factory_isolation(self) -> None:
-        """Two instances should not share the same overlap_regions list."""
-        r1 = DiarizationResult(segments=[], num_speakers=0)
-        r2 = DiarizationResult(segments=[], num_speakers=0)
-        r1.overlap_regions.append((0.0, 1.0))
-        assert r2.overlap_regions == []
 
 
 # ---------------------------------------------------------------------------
@@ -169,25 +129,6 @@ class TestPipelineConfig:
         assert cfg.language == "en"
         assert cfg.cache_dir == "/tmp/cache"
         assert cfg.num_speakers == 3
-
-
-# ---------------------------------------------------------------------------
-# TranscriptSegment is_overlap
-# ---------------------------------------------------------------------------
-
-class TestTranscriptSegmentIsOverlap:
-    def test_default_false(self) -> None:
-        seg = TranscriptSegment("SPEAKER_00", 0.0, 1.0, "hello")
-        assert seg.is_overlap is False
-
-    def test_explicit_true(self) -> None:
-        seg = TranscriptSegment("SPEAKER_00", 0.0, 1.0, "hello", is_overlap=True)
-        assert seg.is_overlap is True
-
-    def test_backward_compat_positional_args(self) -> None:
-        """Existing code passing 4 positional args still works."""
-        seg = TranscriptSegment("SPEAKER_00", 0.0, 1.0, "hello")
-        assert seg.is_overlap is False
 
 
 # ---------------------------------------------------------------------------

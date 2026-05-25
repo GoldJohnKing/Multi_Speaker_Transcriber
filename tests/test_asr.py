@@ -336,53 +336,24 @@ def test_segment_splits_at_sentence_end() -> None:
     assert result[1].end_time == pytest.approx(3.0)
 
 
-def test_segment_max_duration_splits_at_clause() -> None:
-    """When duration exceeds max_duration, split at nearest clause punctuation."""
+def test_segment_pause_splits_without_punctuation() -> None:
+    """Long unpunctuated speech splits at pause (gap > max_gap_sec)."""
+    char_ts = [(f"w{i}", float(i), float(i) + 0.5) for i in range(10)]
+    result = segment_by_timestamps(char_ts, max_gap_sec=0.6)
+    # All consecutive gaps are 0.5s (≤ 0.6) → single group
+    assert len(result) == 1
+
+
+def test_segment_pause_splits_at_large_gap() -> None:
+    """Gaps > max_gap_sec produce splits."""
     char_ts = [
-        ("今", 0.0, 0.5), ("天", 0.5, 1.0),
-        ("，", 1.0, 1.1),
-        ("天", 1.1, 1.6), ("气", 1.6, 2.1),
-        ("，", 2.1, 2.2),
-        ("很", 2.2, 2.7), ("好", 2.7, 3.2),
-        ("，", 3.2, 3.3),
-        ("我", 3.3, 3.8), ("们", 3.8, 4.3),
-        ("，", 4.3, 4.4),
-        ("出", 4.4, 4.9), ("去", 4.9, 5.4),
-        ("，", 5.4, 5.5),
-        ("玩", 5.5, 6.0), ("吧", 6.0, 6.5),
-        ("。", 6.5, 6.6),
+        ("你", 0.0, 0.5), ("好", 0.5, 1.0),
+        ("世", 2.0, 2.5), ("界", 2.5, 3.0),
     ]
-    result = segment_by_timestamps(char_ts, max_duration=4.0)
-    assert len(result) >= 2
-    # First segment ends at last content word before comma (好 at 3.2s)
-    assert result[0].end_time == pytest.approx(3.2)
-    # Second segment starts at first content word after comma (我 at 3.3s)
-    assert result[1].start_time == pytest.approx(3.3)
-    # No gaps or overlaps between segments
-    for j in range(len(result) - 1):
-        assert result[j + 1].start_time >= result[j].end_time
-    for seg in result:
-        duration = seg.end_time - seg.start_time
-        assert duration <= 5.0
-
-
-def test_segment_max_chars_hard_cut() -> None:
-    """When no punctuation and max_chars reached, hard-cut."""
-    char_ts = [(c, float(i) * 0.1, float(i) * 0.1 + 0.1) for i, c in enumerate("一" * 30)]
-    result = segment_by_timestamps(char_ts, max_duration=100.0, max_chars=10)
-    assert len(result) >= 3
-    for seg in result:
-        assert len(seg.text) <= 10
-
-
-def test_segment_no_punctuation_long_duration() -> None:
-    """Long unpunctuated speech triggers hard duration cut."""
-    char_ts = [(f"w{i}", float(i), float(i) + 1.0) for i in range(10)]
-    result = segment_by_timestamps(char_ts, max_duration=5.0, max_chars=100)
-    assert len(result) >= 2
-    for seg in result:
-        duration = seg.end_time - seg.start_time
-        assert duration <= 7.0
+    result = segment_by_timestamps(char_ts, max_gap_sec=0.6)
+    assert len(result) == 2
+    assert result[0].text == "你好"
+    assert result[1].text == "世界"
 
 
 def test_segment_speaker_id_always_speaker_00() -> None:

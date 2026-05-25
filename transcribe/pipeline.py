@@ -13,7 +13,6 @@ from transcribe.data.types import (
 )
 from transcribe.models.audio_extractor import AudioExtractor
 from transcribe.models.asr import create_asr
-from transcribe.models.attribution import AttributionEngine
 from transcribe.models.attribution.strategy import TimestampStrategy
 from transcribe.models.diarizer import Diarizer
 from transcribe.models.matcher import SpeakerMatcher
@@ -136,19 +135,13 @@ def run_pipeline(
         diarization = diarizer.process(audio)
         diarizer.cleanup()
 
-        if transcriber.provides_segments:
-            # Simple dominant-speaker voting only — no turn splitting,
-            # no overlap handling. Preserves ASR's native segmentation.
-            strategy = TimestampStrategy()
-            all_segments = strategy.attribute(all_segments, diarization)
-        else:
-            engine = AttributionEngine()
-            all_segments = engine.run(all_segments, diarization)
+        # Segment-level speaker attribution
+        strategy = TimestampStrategy()
+        all_segments = strategy.attribute(all_segments, diarization)
 
         if verbose:
             console.print(
-                f"检测到 {diarization.num_speakers} 位说话人, "
-                f"{len(diarization.overlap_regions)} 个重叠区域 ... "
+                f"检测到 {diarization.num_speakers} 位说话人 ... "
                 f"完成 ({time.time() - step_start:.1f}s)"
             )
 

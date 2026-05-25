@@ -41,21 +41,20 @@ def test_find_reference_segments_picks_longest_non_overlap():
 
     diarization = DiarizationResult(
         segments=[
-            SpeakerSegment("SPEAKER_00", 0.0, 1.0),  # 1.0s non-overlap
-            SpeakerSegment("SPEAKER_01", 0.5, 0.8, is_overlap=True),  # 0.3s overlap
-            SpeakerSegment("SPEAKER_00", 2.0, 4.5),  # 2.5s non-overlap (longest)
-            SpeakerSegment("SPEAKER_01", 3.0, 5.0),  # 2.0s non-overlap
+            SpeakerSegment("SPEAKER_00", 0.0, 1.0),  # 1.0s
+            SpeakerSegment("SPEAKER_01", 0.5, 0.8),  # 0.3s (too short)
+            SpeakerSegment("SPEAKER_00", 2.0, 4.5),  # 2.5s (longest)
+            SpeakerSegment("SPEAKER_01", 3.0, 5.0),  # 2.0s
         ],
         num_speakers=2,
-        overlap_regions=[(0.5, 0.8)],
     )
 
     refs = _find_reference_segments(diarization)
     assert "SPEAKER_00" in refs
     assert "SPEAKER_01" in refs
-    # SPEAKER_00: longest non-overlap is (2.0, 4.5)
+    # SPEAKER_00: longest is (2.0, 4.5)
     assert refs["SPEAKER_00"][0] == (2.0, 4.5)
-    # SPEAKER_01: longest non-overlap is (3.0, 5.0)
+    # SPEAKER_01: longest is (3.0, 5.0) (0.5-0.8 too short)
     assert refs["SPEAKER_01"][0] == (3.0, 5.0)
 
 
@@ -65,14 +64,13 @@ def test_find_reference_segments_fallback_to_overlap():
     diarization = DiarizationResult(
         segments=[
             SpeakerSegment("SPEAKER_00", 0.0, 0.2),  # too short
-            SpeakerSegment("SPEAKER_01", 0.1, 2.0, is_overlap=True),  # overlap, only segment
+            SpeakerSegment("SPEAKER_01", 0.1, 2.0),  # 1.9s, only valid segment
         ],
         num_speakers=2,
-        overlap_regions=[(0.1, 2.0)],
     )
 
     refs = _find_reference_segments(diarization)
-    # SPEAKER_01 should fallback to its only (overlap) segment
+    # SPEAKER_01 should have its only segment
     assert "SPEAKER_01" in refs
     assert len(refs["SPEAKER_01"]) == 1
     assert refs["SPEAKER_01"][0] == (0.1, 2.0)

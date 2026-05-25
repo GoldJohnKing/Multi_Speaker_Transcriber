@@ -200,126 +200,23 @@ class Diarizer:
         else:
             exclusive = diarization_output  # pyannote 3.x
 
-        # ── Non-exclusive annotation (all active speakers) ─────────
-        if hasattr(diarization_output, "speaker_diarization"):
-            non_exclusive = diarization_output.speaker_diarization
-        else:
-            non_exclusive = diarization_output  # pyannote 3.x fallback
-
-        # ── Extract overlap regions (sweep-line algorithm) ─────────
-        overlap_regions = self._extract_overlap_regions(
-            diarization_output, audio.start_time
-        )
-
-        # ── Build exclusive segments with is_overlap flag ──────────
+        # ── Build exclusive segments ────────────────────────────────
         segments: list[SpeakerSegment] = []
         speaker_set: set[str] = set()
         for turn, _, speaker in exclusive.itertracks(yield_label=True):
             seg_start = turn.start + audio.start_time
             seg_end = turn.end + audio.start_time
-            seg_dur = seg_end - seg_start
             speaker_set.add(speaker)
-            is_ov = False
-            if seg_dur > 0:
-                for ov_start, ov_end in overlap_regions:
-                    intersection = max(0.0, min(seg_end, ov_end) - max(seg_start, ov_start))
-                    if intersection >= seg_dur * 0.5:
-                        is_ov = True
-                        break
             segments.append(SpeakerSegment(
                 speaker_id=speaker,
                 start_time=seg_start,
                 end_time=seg_end,
-                is_overlap=is_ov,
-            ))
-
-        # ── Build non-exclusive segments for overlap attribution ───
-        non_exclusive_segs: list[SpeakerSegment] = []
-        for turn, _, speaker in non_exclusive.itertracks(yield_label=True):
-            non_exclusive_segs.append(SpeakerSegment(
-                speaker_id=speaker,
-                start_time=turn.start + audio.start_time,
-                end_time=turn.end + audio.start_time,
             ))
 
         return DiarizationResult(
             segments=segments,
             num_speakers=len(speaker_set),
-            overlap_regions=overlap_regions,
-            non_exclusive_segments=non_exclusive_segs,
         )
-
-    def _extract_overlap_regions(
-        self, diarization_output, audio_start_time: float = 0.0
-    ) -> list[tuple[float, float]]:
-        """Detect time regions where multiple speakers overlap.
-
-        Uses a sweep-line algorithm (O(n log n)) instead of pairwise
-        intersection (O(n²)). Collects (time, delta, speaker) events,
-        sorts them, and tracks active speaker count to find overlap spans.
-        """
-        if hasattr(diarization_output, "speaker_diarization"):
-            annotation = diarization_output.speaker_diarization
-        else:
-            annotation = diarization_output
-
-        # Build sweep-line events (skip zero-duration turns to prevent leaks)
-        events: list[tuple[float, int, str]] = []  # (time, +1/-1, speaker)
-        for turn, _, speaker in annotation.itertracks(yield_label=True):
-            if turn.end > turn.start:  # skip zero-duration turns
-                events.append((turn.start, 1, speaker))
-                events.append((turn.end, -1, speaker))
-        events.sort()
-
-        # Sweep: overlap when >1 active speaker
-        active_speakers: dict[str, int] = {}  # speaker -> ref count
-        raw_overlaps: list[tuple[float, float]] = []
-        ov_start: float | None = None
-
-        for time, delta, speaker in events:
-            prev_count = len(active_speakers)
-            if delta > 0:
-                active_speakers[speaker] = active_speakers.get(speaker, 0) + 1
-            else:
-                if speaker not in active_speakers:
-                    continue
-                active_speakers[speaker] -= 1
-                if active_speakers[speaker] <= 0:
-                    active_speakers.pop(speaker, None)
-            curr_count = len(active_speakers)
-
-            if prev_count <= 1 and curr_count > 1:
-                ov_start = time
-            elif prev_count > 1 and curr_count <= 1 and ov_start is not None:
-                raw_overlaps.append(
-                    (ov_start + audio_start_time, time + audio_start_time)
-                )
-                ov_start = None
-
-        return self._merge_intervals(raw_overlaps)
-
-    @staticmethod
-    def _merge_intervals(
-        intervals: list[tuple[float, float]],
-    ) -> list[tuple[float, float]]:
-        """Merge truly overlapping time intervals.
-
-        Unlike the previous version which merged adjacent intervals (start <= prev_end),
-        this only merges intervals with genuine temporal overlap (start < prev_end).
-        This prevents merging overlap regions from unrelated speaker pairs that
-        merely touch at a boundary.
-        """
-        if not intervals:
-            return []
-        sorted_intervals = sorted(intervals, key=lambda x: x[0])
-        merged: list[tuple[float, float]] = [sorted_intervals[0]]
-        for start, end in sorted_intervals[1:]:
-            prev_start, prev_end = merged[-1]
-            if start < prev_end:  # only merge genuine overlap, not adjacency
-                merged[-1] = (prev_start, max(prev_end, end))
-            else:
-                merged.append((start, end))
-        return merged
 
     def cleanup(self) -> None:
         """Release model from memory."""
