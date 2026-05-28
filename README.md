@@ -93,6 +93,7 @@ uv run python -m transcribe input.mp4 --speaker-ref speakers/ -o output.srt -v
 # 选择 ASR 后端（默认 Fun-ASR-Nano）
 uv run python -m transcribe input.mp4 --backend Qwen3-ASR -o output.srt -v
 uv run python -m transcribe input.mp4 --backend Fun-ASR-Paraformer -o output.srt -v
+uv run python -m transcribe input.mp4 --backend Whisper -o output.srt -v
 ```
 
 ### 输出示例
@@ -118,7 +119,7 @@ uv run python -m transcribe input.mp4 --backend Fun-ASR-Paraformer -o output.srt
 ```
 usage: transcribe [-h] [-o OUTPUT] [--hotwords FILE] [--num-speakers N]
                   [--no-diarize] [--speaker-ref DIR]
-                  [--backend {Fun-ASR-Paraformer,Fun-ASR-Nano,Qwen3-ASR}]
+                  [--backend {Fun-ASR-Paraformer,Fun-ASR-Nano,Qwen3-ASR,Whisper}]
                   [--device {cpu,cuda,auto}] [--cache-dir DIR]
                   [--config FILE] [--keep-cache] [-v]
                   input
@@ -132,7 +133,7 @@ usage: transcribe [-h] [-o OUTPUT] [--hotwords FILE] [--num-speakers N]
   --num-speakers N       已知说话人数量（默认自动检测）
   --no-diarize           禁用说话人识别（纯 ASR 模式）
   --speaker-ref DIR      说话人参考音频目录（文件名即说话人名）
-  --backend BACKEND      ASR 后端：Fun-ASR-Paraformer / Fun-ASR-Nano / Qwen3-ASR（默认 Fun-ASR-Nano）
+  --backend BACKEND      ASR 后端：Fun-ASR-Paraformer / Fun-ASR-Nano / Qwen3-ASR / Whisper（默认 Fun-ASR-Nano）
   --device DEVICE        计算设备：cpu / cuda / auto（默认 auto）
   --cache-dir DIR        中间缓存目录（默认 .cache）
   --config FILE          YAML 配置文件路径
@@ -163,42 +164,56 @@ usage: transcribe [-h] [-o OUTPUT] [--hotwords FILE] [--num-speakers N]
                 │
                 ▼
 ┌─────────────────────────────────┐
-│  Stage 2: 说话人识别            │  Pyannote 4.0 Community-1
-│  (默认启用, --no-diarize 关闭)  │  输出: 说话人片段 + 重叠区域
+│  Stage 2: 语音识别 (ASR)         │  Fun-ASR-Nano (默认)
+│  --backend 选择后端             │  或 Fun-ASR-Paraformer
+│  热词增强 + 标点               │  或 Qwen3-ASR / Whisper
 └───────────────┬─────────────────┘
                 │
                 ▼
 ┌─────────────────────────────────┐
-│  Stage 2.5: 说话人参考匹配     │  ERes2NetV2 (3D-Speaker)
+│  Stage 2.5: 字幕分段            │  SubtitleSegmenter
+│  (部分后端跳过)                 │  标点/停顿处分段
+│  Fun-ASR-Paraformer/Whisper     │  Fun-ASR-Nano/Qwen3-ASR
+│  直接输出字幕段                 │  需要此阶段
+└───────────────┬─────────────────┘
+                │
+                ▼
+┌─────────────────────────────────┐
+│  Stage 3: 说话人识别 + 归因     │  Pyannote 4.0 Community-1
+│  (默认启用, --no-diarize 关闭)  │  TimestampStrategy 归因
+│  输出: 说话人标签 + 置信度      │
+└───────────────┬─────────────────┘
+                │
+                ▼
+┌─────────────────────────────────┐
+│  Stage 3.5: 说话人参考匹配     │  ERes2NetV2 (3D-Speaker)
 │  (--speaker-ref DIR)            │  多段加权嵌入 + 匈牙利算法匹配
-│  将 SPEAKER_XX 映射为实际姓名   │  需要 Stage 2 已启用
+│  将 SPEAKER_XX 映射为实际姓名   │  需要 Stage 3 已启用
 └───────────────┬─────────────────┘
                 │
                 ▼
 ┌─────────────────────────────────┐
-│  Stage 3: 语音识别 (ASR)       │  Fun-ASR-Nano (默认)
-│  热词增强 + 标点修复           │  或 Fun-ASR-Paraformer
-│  --backend 选择后端           │  或 Qwen3-ASR
-└───────────────┬─────────────────┘
-                │
-                ▼
-┌─────────────────────────────────┐
-│  Stage 4: SRT 生成             │  合并相邻片段 → 输出 SRT
-│  说话人标签 + 时间戳对齐       │
+│  Stage 4: SRT 生成             │  排序 + 说话人标签 → 输出 SRT
 └─────────────────────────────────┘
 ```
 
 ### 数据流
 
 ```
-AudioSegment ──→ DiarizationResult ──→ (--speaker-ref)
-                 (SpeakerSegment[])     SPEAKER_XX → 实际姓名
-                        │
-                        ▼
-               TranscriptSegment[]
-                        │
-                        ▼
-                     SRT 文件
+AudioSegment ──→ ASR ──→ WordTimestamp[] ──→ SubtitleSegmenter ──→ TranscriptSegment[]
+                         (或直接 TranscriptSegment[])              (部分后端跳过)
+                                                              │
+                                                              ▼
+                                              DiarizationResult (Pyannote)
+                                              + TimestampStrategy 归因
+                                              → 带说话人标签的 TranscriptSegment[]
+                                                              │
+                                                              ▼
+                                                   (--speaker-ref)
+                                                   SPEAKER_XX → 实际姓名
+                                                              │
+                                                              ▼
+                                                           SRT 文件
 ```
 
 ### 各阶段详解
@@ -206,28 +221,30 @@ AudioSegment ──→ DiarizationResult ──→ (--speaker-ref)
 #### Stage 1 — 音频提取
 使用 FFmpeg 将任意格式的视频/音频转为 16kHz 单声道 float32 WAV。支持 MP4、MKV、AVI、MP3、WAV 等常见格式。
 
-#### Stage 2 — 说话人识别
-使用 Pyannote Audio 4.0 Community-1 模型进行说话人分割（CC-BY-4.0 许可）。输出每个说话人的时间片段（`SpeakerSegment`）及重叠区域列表（`overlap_regions`）。支持 `--num-speakers` 提示已知说话人数量以提高准确性。
+#### Stage 2 — 语音识别
+管线首先对完整音频进行 ASR 转录，再通过说话人归因分配说话人标签（post-hoc attribution）。支持四种 ASR 后端，通过 `--backend` 参数选择：
 
-#### Stage 2.5 — 说话人参考匹配（可选，`--speaker-ref DIR`）
-当提供说话人参考音频目录时，使用 ERes2NetV2（3D-Speaker）提取 192 维声纹嵌入。对每个说话人，从最长 3 个非重叠片段中提取嵌入并计算时长加权平均值，然后通过匈牙利算法（`scipy.optimize.linear_sum_assignment`）进行全局最优 1:1 匹配，将匿名说话人标签（`SPEAKER_00` 等）关联到参考音频文件名（即说话人姓名）。例如目录下放置 `张三.wav`、`李四.wav`，输出中将显示 `[张三]`、`[李四]` 而非 `[说话人1]`、`[说话人2]`。此阶段需要说话人识别（Stage 2）已启用。
+**Fun-ASR-Nano（默认）** — 基于 LLM 的语音识别模型，标点由 LLM 原生生成，无需单独标点模型。支持热词增强（`hotwords=list[str]`），并内置热词标点修复逻辑。GPU 自动启用 BF16（Ampere+）。输出词级时间戳，需经后续分段阶段处理。
 
-#### Stage 3 — 语音识别
+**Fun-ASR-Paraformer** — 经典非自回归模型（`paraformer-zh`），配合 `ct-punc` 标点恢复和热词增强（`hotword=str`）。直接输出字幕段（`provides_segments=True`），跳过分段阶段。
 
-支持三种 ASR 后端，通过 `--backend` 参数选择：
+**Qwen3-ASR** — 基于 Qwen3 LLM 的语音识别模型（1.7B），配合 Qwen3-ForcedAligner（0.6B）提供字符级时间戳。在中文基准测试中达到 SOTA 准确率（AISHELL-2 CER 2.71%），支持 30+ 语言和 22 种中文方言。热词通过 `context` 参数以 LLM prompt 方式注入。无内置 VAD，需经后续分段阶段处理。VRAM 需求较高（~7 GB）。
 
-**Fun-ASR-Nano（默认）** — 基于 LLM 的语音识别模型，标点由 LLM 原生生成，无需单独标点模型。支持热词增强（`hotwords=list[str]`），并内置热词标点修复逻辑。GPU 自动启用 BF16（Ampere+）。
+**Whisper** — 基于 faster-whisper（CTranslate2 推理）的高效 Whisper 实现，默认使用 `large-v3` 模型。支持热词增强（`hotwords=str`，通过 `<|startofprev|>` token 注入）。GPU 使用 float16，CPU 使用 int8 量化。直接输出字幕段（`provides_segments=True`），跳过分段阶段。
 
-**Fun-ASR-Paraformer** — 经典 SeACo-Paraformer 非自回归模型，配合 ct-punc 标点恢复和热词增强（`hotword=str`）。识别速度更快，但标点质量略低于 LLM 方案。
+所有后端的字幕输出统一移除句末标点（。！？），逗号级标点保留在字幕行内。
 
-两种 FunASR 后端均内置 FSMN-VAD 语音活动检测，自动将长音频切分为多个短句。
+#### Stage 2.5 — 字幕分段（部分后端跳过）
+当 ASR 后端不直接提供字幕段（`provides_segments=False`，即 Fun-ASR-Nano 和 Qwen3-ASR）时，由 `SubtitleSegmenter` 将词级时间戳按标点和停顿分割为字幕段。Fun-ASR-Paraformer 和 Whisper 后端直接输出字幕段，跳过此阶段。
 
-**Qwen3-ASR** — 基于 Qwen3 LLM 的语音识别模型（1.7B），配合 Qwen3-ForcedAligner（0.6B）提供字符级时间戳。在中文基准测试中达到 SOTA 准确率（AISHELL-2 CER 2.71%），支持 30+ 语言和 22 种中文方言。热词通过 `context` 参数以 LLM prompt 方式注入。无内置 VAD，字幕分段由 `segment_by_timestamps()` 实现（标点 + 时长混合策略）。VRAM 需求较高（~7 GB）。
+#### Stage 3 — 说话人识别与归因（默认启用，`--no-diarize` 关闭）
+使用 Pyannote Audio 4.0 Community-1 模型进行说话人分割（CC-BY-4.0 许可），输出每个说话人的时间片段（`SpeakerSegment`）。然后通过 `TimestampStrategy` 将转录片段与说话人片段按时间重叠投票进行归因，为每条字幕分配说话人标签及置信度。支持 `--num-speakers` 提示已知说话人数量以提高准确性。
 
-在说话人识别模式下，每个说话人片段独立送入 ASR；在 `--no-diarize` 模式下，整段音频作为单一说话人转录。所有后端的字幕输出统一移除句末标点（。！？），逗号级标点保留在字幕行内。
+#### Stage 3.5 — 说话人参考匹配（可选，`--speaker-ref DIR`）
+当提供说话人参考音频目录时，使用 ERes2NetV2（3D-Speaker）提取 192 维声纹嵌入。对每个说话人，从最长 3 个非重叠片段中提取嵌入并计算时长加权平均值，然后通过匈牙利算法（`scipy.optimize.linear_sum_assignment`）进行全局最优 1:1 匹配，将匿名说话人标签（`SPEAKER_00` 等）关联到参考音频文件名（即说话人姓名）。例如目录下放置 `张三.wav`、`李四.wav`，输出中将显示 `[张三]`、`[李四]` 而非 `[说话人1]`、`[说话人2]`。此阶段需要说话人识别（Stage 3）已启用。
 
 #### Stage 4 — SRT 生成
-将转录片段排序、合并相邻同说话人片段，生成标准 SRT 字幕文件。说话人标签格式默认为 `[说话人1]`、`[说话人2]` 等；若提供了 `--speaker-ref` 参考音频，则替换为实际姓名（如 `[张三]`、`[李四]`）。
+将转录片段按时间排序，附加说话人标签，生成标准 SRT 字幕文件。说话人标签格式默认为 `[说话人1]`、`[说话人2]` 等；若提供了 `--speaker-ref` 参考音频，则替换为实际姓名（如 `[张三]`、`[李四]`）。
 
 ---
 
@@ -237,7 +254,7 @@ AudioSegment ──→ DiarizationResult ──→ (--speaker-ref)
 
 ```yaml
 device: auto              # 计算设备: auto / cpu / cuda
-backend: Fun-ASR-Nano     # ASR 后端: Fun-ASR-Paraformer / Fun-ASR-Nano / Qwen3-ASR
+backend: Fun-ASR-Nano     # ASR 后端: Fun-ASR-Paraformer / Fun-ASR-Nano / Qwen3-ASR / Whisper
 diarize: true             # 说话人识别
 language: zh              # 语言（当前仅支持中文）
 speaker_references: null  # 说话人参考音频目录路径
@@ -282,23 +299,30 @@ Multi_Speaker_Transcribe/
 │   ├── __main__.py                    # CLI 入口点
 │   ├── cli.py                         # 参数解析
 │   ├── config.py                      # 配置加载（YAML + CLI 合并）
+│   ├── constants.py                   # 共享标点常量
 │   ├── pipeline.py                    # 管线编排器
 │   ├── data/
 │   │   ├── types.py                   # 核心数据类型定义
 │   │   └── __init__.py
 │   └── models/
 │       ├── audio_extractor.py         # Stage 1: FFmpeg 音频提取
-│       ├── diarizer.py                # Stage 2: Pyannote 说话人识别
-│       ├── matcher.py                 # Stage 2.5: 声纹嵌入匹配
-│       ├── asr/                       # Stage 3: ASR 后端包
+│       ├── diarizer.py                # Stage 3: Pyannote 说话人识别
+│       ├── matcher.py                 # Stage 3.5: 声纹嵌入匹配
+│       ├── segmentation.py            # Stage 2.5: 字幕分段
+│       ├── srt_writer.py              # Stage 4: SRT 生成
+│       ├── asr/                       # Stage 2: ASR 后端包
 │       │   ├── __init__.py            #   注册 + 重导出
 │       │   ├── base.py                #   ASRBase 抽象基类
 │       │   ├── factory.py             #   create_asr 工厂函数
-│       │   ├── utils.py               #   共享工具（热词修复、时间戳解析、字幕分段）
+│       │   ├── utils.py               #   共享工具（热词修复、时间戳解析）
 │       │   ├── funasr_nano.py        #   Fun-ASR-Nano 后端
 │       │   ├── funasr_paraformer.py  #   Fun-ASR-Paraformer 后端
-│       │   └── qwen3_asr.py         #   Qwen3-ASR 后端
-│       ├── srt_writer.py             # Stage 4: SRT 生成
+│       │   ├── qwen3_asr.py         #   Qwen3-ASR 后端
+│       │   └── whisper.py            #   Whisper 后端 (faster-whisper)
+│       ├── attribution/               # 说话人归因
+│       │   ├── __init__.py
+│       │   ├── engine.py             #   AttributionEngine 包装器
+│       │   └── strategy.py           #   TimestampStrategy（时间重叠投票）
 │       └── __init__.py
 ├── tests/                             # 测试目录
 ├── hotwords/                          # 热词文件目录
@@ -312,9 +336,10 @@ Multi_Speaker_Transcribe/
 | 类型 | 用途 |
 |------|------|
 | `AudioSegment` | 音频片段（waveform + 采样率 + 时间范围） |
-| `SpeakerSegment` | 说话人时间片段（说话人 ID + 起止时间 + 是否重叠） |
-| `DiarizationResult` | 说话人识别结果（片段列表 + 说话人数量 + 重叠区域） |
-| `TranscriptSegment` | 转录片段（说话人 ID + 起止时间 + 文本） |
+| `SpeakerSegment` | 说话人时间片段（说话人 ID + 起止时间） |
+| `DiarizationResult` | 说话人识别结果（片段列表 + 说话人数量） |
+| `TranscriptSegment` | 转录片段（说话人 ID + 起止时间 + 文本 + 词级时间戳 + 归因置信度） |
+| `WordTimestamp` | 词级时间戳（词 + 起止时间） |
 | `PipelineConfig` | 管线配置（含 `backend` 后端选择、`speaker_references` 参考音频目录） |
 
 ---
@@ -345,7 +370,7 @@ uv run python -m transcribe input.mp4 --speaker-ref speakers/ -o output.srt -v
 - 使用 ERes2NetV2（3D-Speaker / ModelScope）为每段参考音频提取 192 维声纹嵌入。该模型在 20 万中文说话人数据上训练，CN-Celeb EER 达 6.14%
 - 对说话人识别产生的每个说话人，从最长 3 个非重叠片段中提取嵌入并计算时长加权平均
 - 通过匈牙利算法进行全局最优 1:1 匹配，余弦相似度低于阈值（默认 0.5）的配对将被拒绝
-- 需要说话人识别（Stage 2）已启用；若使用 `--no-diarize`，参考匹配将跳过并发出警告
+- 需要说话人识别（Stage 3）已启用；若使用 `--no-diarize`，参考匹配将跳过并发出警告
 
 ---
 
@@ -356,7 +381,8 @@ uv run python -m transcribe input.mp4 --speaker-ref speakers/ -o output.srt -v
 | 项目 | 用途 | 许可证 |
 |------|------|--------|
 | [PyTorch](https://pytorch.org/) | 深度学习框架 | BSD-3-Clause |
-| [FunASR](https://github.com/modelscope/FunASR) | 中文语音识别（Fun-ASR-Nano / SeACo-Paraformer + VAD） | MIT |
+| [FunASR](https://github.com/modelscope/FunASR) | 中文语音识别（Fun-ASR-Nano / Fun-ASR-Paraformer + VAD） | MIT |
+| [faster-whisper](https://github.com/SYSTRAN/faster-whisper) | Whisper 语音识别（CTranslate2 推理） | MIT |
 | [Qwen3-ASR](https://github.com/QwenLM/Qwen3-ASR) | 多语言语音识别（Qwen3-ASR-1.7B + ForcedAligner） | Apache-2.0 |
 | [Pyannote Audio](https://github.com/pyannote/pyannote-audio) | 说话人识别（Speaker Diarization 4.0 Community-1） | MIT |
 | [3D-Speaker](https://github.com/modelscope/3D-Speaker) | 声纹嵌入提取（ERes2NetV2 中文模型） | Apache-2.0 |
@@ -390,14 +416,16 @@ uv run pytest tests/test_srt_writer.py -v
 
 | 测试文件 | 覆盖范围 |
 |----------|----------|
-| `test_types.py` | 核心数据类型（5 个 dataclass） |
+| `test_types.py` | 核心数据类型（dataclass） |
 | `test_config.py` | 配置加载（默认值、YAML、CLI 覆盖） |
 | `test_audio_extractor.py` | FFmpeg 音频提取 |
-| `test_srt_writer.py` | SRT 生成（时间戳、标签、合并、排序） |
-| `test_asr.py` | 三后端注册 + 工厂 + 热词修复 + 时间戳解析 + 字幕分段 |
+| `test_srt_writer.py` | SRT 生成（时间戳、标签、排序） |
+| `test_asr.py` | 后端注册 + 工厂 + 热词修复 + 时间戳解析 + 字幕分段 |
 | `test_qwen3_asr.py` | Qwen3-ASR 后端注册、热词加载、文本-时间戳对齐、mock 转写 |
 | `test_diarizer.py` | 说话人识别（mock） |
 | `test_matcher.py` | 声纹匹配（余弦相似度、参考匹配） |
+| `test_segmentation.py` | 字幕分段（标点分割、停顿分割、CJK 处理） |
+| `test_attribution.py` | 说话人归因策略（时间重叠投票、置信度） |
 | `test_pipeline_basic.py` | CLI 解析 + 基础管线 |
 | `test_pipeline_full.py` | 完整管线集成测试 |
 
@@ -423,6 +451,7 @@ uv run pytest tests/test_srt_writer.py -v
 | ASR | Fun-ASR-Nano (默认) | ~1-2 GB |
 | ASR | Fun-ASR-Paraformer | ~1-2 GB |
 | ASR | Qwen3-ASR | ~7 GB (ASR 5G + Aligner 2G) |
+| ASR | Whisper (large-v3) | ~3-4 GB |
 
 管线在各阶段之间释放模型显存（`cleanup()`），避免同时加载所有模型。
 

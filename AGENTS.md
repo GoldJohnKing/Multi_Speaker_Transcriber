@@ -61,17 +61,28 @@ transcribe/
 ├── __main__.py        # CLI 入口
 ├── cli.py             # 参数解析（argparse）
 ├── config.py          # 配置加载（YAML + CLI 合并）
+├── constants.py       # 共享标点常量（SENTENCE_END, CLAUSE_END 等）
 ├── pipeline.py        # 管线编排
 ├── data/types.py      # 核心数据类型（dataclass）
 └── models/            # 各阶段模型实现
-    └── asr/           # ASR 后端包
-        ├── __init__.py         # 注册 + 重导出
-        ├── base.py             # ASRBase 抽象基类
-        ├── factory.py          # create_asr 工厂函数
-        ├── utils.py            # 共享工具（热词修复、时间戳解析、字幕分段）
-        ├── funasr_nano.py      # Fun-ASR-Nano 后端
-        ├── funasr_paraformer.py # Fun-ASR-Paraformer 后端
-        └── qwen3_asr.py       # Qwen3-ASR 后端
+    ├── audio_extractor.py  # FFmpeg 音频提取
+    ├── diarizer.py         # 说话人识别（Pyannote）
+    ├── matcher.py          # 声纹嵌入匹配
+    ├── segmentation.py     # 字幕分段（SubtitleSegmenter）
+    ├── srt_writer.py       # SRT 生成
+    ├── asr/                # ASR 后端包
+    │   ├── __init__.py         # 注册 + 重导出
+    │   ├── base.py             # ASRBase 抽象基类
+    │   ├── factory.py          # create_asr 工厂函数
+    │   ├── utils.py            # 共享工具（热词修复、时间戳解析、字幕分段）
+    │   ├── funasr_nano.py      # Fun-ASR-Nano 后端
+    │   ├── funasr_paraformer.py # Fun-ASR-Paraformer 后端
+    │   ├── qwen3_asr.py        # Qwen3-ASR 后端
+    │   └── whisper.py          # Whisper 后端（faster-whisper/CTranslate2）
+    └── attribution/        # 说话人归因包
+        ├── __init__.py     # 导出 AttributionEngine
+        ├── engine.py       # AttributionEngine 包装器
+        └── strategy.py     # TimestampStrategy（时间重叠投票）
 ```
 
 - 每个模型类实现 `process()` / `extract()` / `transcribe()` 等方法，以及 `cleanup()` 用于释放 GPU 显存
@@ -79,18 +90,23 @@ transcribe/
 - 新增管线阶段时，同步更新 `pipeline.py`、`cli.py`（如有新参数）、`data/types.py`（如有新数据类型）、`config.yaml`（如有新配置项）
 - 新增 ASR 后端时，在 `transcribe/models/asr/` 下新建文件，实现 `ASRBase` 子类并调用 `register_backend()`，然后在 `__init__.py` 中 import 触发注册，最后更新 `cli.py` 的 `--backend` choices
 - `config.yaml` 中的顶层字段由 `config.py` 加载，子配置段（`diarizer:`、`matcher:` 等）目前仅为参考，实际参数硬编码在模型类构造函数中
+- 说话人归因使用 `attribution/strategy.py` 中的 `TimestampStrategy`，基于时间重叠投票分配说话人标签
 
 ### ASR 后端差异
 
 | 后端 | 模型 | 热词机制 | 时间戳来源 | 字幕分段 |
 |------|------|---------|-----------|---------|
 | Fun-ASR-Nano | FunAudioLLM/Fun-ASR-Nano-2512 | `hotwords=list[str]` 解码器偏置 | FSMN-VAD 分段 | VAD 分段 |
-| Fun-ASR-Paraformer | speech_seaco_paraformer_large | `hotword=str` 解码器偏置 | FSMN-VAD 分段 | VAD 分段 |
+| Fun-ASR-Paraformer | paraformer-zh | `hotword=str` 解码器偏置 | FSMN-VAD 分段 | VAD 分段 |
 | Qwen3-ASR | Qwen3-ASR-1.7B + ForcedAligner-0.6B | `context=str` LLM prompt 偏置 | ForcedAligner 字符级对齐 | 标点 + 时长混合分段 |
+| Whisper | large-v3 (faster-whisper/CTranslate2) | `hotwords=str` prompt 前缀注入 | faster-whisper 词级时间戳 | Whisper VAD + attention 分段 |
 
 - FunASR 后端内置 VAD 自动分段；Qwen3-ASR 无 VAD，使用 `segment_by_timestamps()` 混合分段策略
 - Qwen3-ASR 的 `text` 含标点但 `time_stamps` 不含标点，需通过 `_align_text_to_timestamps()` 对齐
 - `segment_by_timestamps()` 在句末标点（。！？）处分段并移除标点；逗号级标点保留在字幕行内
+- Fun-ASR-Paraformer 和 Whisper 的 `provides_segments=True`，直接输出字幕段；Fun-ASR-Nano 和 Qwen3-ASR 的 `provides_segments=False`，由管线中的 `SubtitleSegmenter` 进行分段
+- Whisper 后端使用 `faster-whisper`（CTranslate2 推理），GPU 使用 float16，CPU 使用 int8
+- 说话人归因通过 `TimestampStrategy` 实现：根据转录片段与说话人片段的时间重叠投票分配说话人，支持置信度评分
 
 ## 运行时配置
 

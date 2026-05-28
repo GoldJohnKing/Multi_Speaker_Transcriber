@@ -1,6 +1,6 @@
 device: auto
 diarize: true
-backend: Fun-ASR-Nano  # 可选 Fun-ASR-Paraformer / Fun-ASR-Nano / Qwen3-ASR
+backend: Fun-ASR-Nano  # 可选 Fun-ASR-Paraformer / Fun-ASR-Nano / Qwen3-ASR / Whisper
 language: zh
 speaker_references: null
 
