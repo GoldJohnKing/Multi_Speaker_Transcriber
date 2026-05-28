@@ -81,6 +81,13 @@ class WhisperTranscriber(ASRBase):
             language=self._language,
             hotwords=self._hotwords,
             vad_filter=True,
+            vad_parameters=dict(
+                min_silence_duration_ms=500,
+                speech_pad_ms=300,
+                min_speech_duration_ms=250,
+                max_speech_duration_s=30,
+            ),
+            word_timestamps=True,
         )
 
         segments: list[TranscriptSegment] = []
@@ -89,11 +96,20 @@ class WhisperTranscriber(ASRBase):
             if not text:
                 continue
 
+            # Use word-level timestamps when available for more precise
+            # boundaries than the segment-level estimates.
+            if seg.words:
+                start = seg.words[0].start
+                end = seg.words[-1].end
+            else:
+                start = seg.start
+                end = seg.end
+
             segments.append(
                 TranscriptSegment(
                     speaker_id="SPEAKER_00",
-                    start_time=seg.start + audio.start_time,
-                    end_time=seg.end + audio.start_time,
+                    start_time=start + audio.start_time,
+                    end_time=end + audio.start_time,
                     text=text,
                 )
             )
