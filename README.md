@@ -95,6 +95,7 @@ uv run python -m transcribe input.mp4 --speaker-ref speakers/ -o output.srt -v
 # 选择 ASR 后端（默认 Fun-ASR-Nano）
 uv run python -m transcribe input.mp4 --backend Qwen3-ASR -o output.srt -v
 uv run python -m transcribe input.mp4 --backend Fun-ASR-Paraformer -o output.srt -v
+uv run python -m transcribe input.mp4 --backend Whisper -o output.srt -v
 ```
 
 ### 输出示例
@@ -120,7 +121,7 @@ uv run python -m transcribe input.mp4 --backend Fun-ASR-Paraformer -o output.srt
 ```
 usage: transcribe [-h] [-o OUTPUT] [--hotwords FILE] [--num-speakers N]
                   [--no-diarize] [--speaker-ref DIR]
-                  [--backend {Fun-ASR-Paraformer,Fun-ASR-Nano,Qwen3-ASR}]
+                  [--backend {Fun-ASR-Paraformer,Fun-ASR-Nano,Qwen3-ASR,Whisper}]
                   [--device {cpu,cuda,auto}] [--cache-dir DIR]
                   [--config FILE] [--keep-cache] [-v]
                   input
@@ -134,7 +135,7 @@ usage: transcribe [-h] [-o OUTPUT] [--hotwords FILE] [--num-speakers N]
   --num-speakers N       已知说话人数量（默认自动检测）
   --no-diarize           禁用说话人识别（纯 ASR 模式）
   --speaker-ref DIR      说话人参考音频目录（文件名即说话人名）
-  --backend BACKEND      ASR 后端：Fun-ASR-Paraformer / Fun-ASR-Nano / Qwen3-ASR（默认 Fun-ASR-Nano）
+  --backend BACKEND      ASR 后端：Fun-ASR-Paraformer / Fun-ASR-Nano / Qwen3-ASR / Whisper（默认 Fun-ASR-Nano）
   --device DEVICE        计算设备：cpu / cuda / auto（默认 auto）
   --cache-dir DIR        中间缓存目录（默认 .cache）
   --config FILE          YAML 配置文件路径
@@ -181,6 +182,7 @@ usage: transcribe [-h] [-o OUTPUT] [--hotwords FILE] [--num-speakers N]
 │  Stage 3: 语音识别 (ASR)       │  Fun-ASR-Nano (默认)
 │  热词增强 + 标点修复           │  或 Fun-ASR-Paraformer
 │  --backend 选择后端           │  或 Qwen3-ASR
+│                                │  或 Whisper
 └───────────────┬─────────────────┘
                 │
                 ▼
@@ -216,13 +218,15 @@ AudioSegment ──→ DiarizationResult ──→ (--speaker-ref)
 
 #### Stage 3 — 语音识别
 
-支持三种 ASR 后端，通过 `--backend` 参数选择：
+支持四种 ASR 后端，通过 `--backend` 参数选择：
 
 **Fun-ASR-Nano（默认）** — 基于 LLM 的语音识别模型，标点由 LLM 原生生成，无需单独标点模型。支持热词增强（`hotwords=list[str]`），并内置热词标点修复逻辑。GPU 自动启用 BF16（Ampere+）。
 
 **Fun-ASR-Paraformer** — 经典 SeACo-Paraformer 非自回归模型，配合 ct-punc 标点恢复和热词增强（`hotword=str`）。识别速度更快，但标点质量略低于 LLM 方案。
 
 两种 FunASR 后端均内置 FSMN-VAD 语音活动检测，自动将长音频切分为多个短句。
+
+**Whisper** — 基于 faster-whisper（CTranslate2 推理引擎）的 Whisper large-v3 模型。支持 99 种语言的自动语言检测，内置 Silero VAD 自动分段，并提供词级精确时间戳。热词通过 `hotwords` 参数以逗号连接字符串形式传入。CPU 使用 INT8 量化，GPU 使用 FP16 精度。GPU 显存需求约 ~3-4 GB。
 
 **Qwen3-ASR** — 基于 Qwen3 LLM 的语音识别模型（1.7B），配合 Qwen3-ForcedAligner（0.6B）提供字符级时间戳。在中文基准测试中达到 SOTA 准确率（AISHELL-2 CER 2.71%），支持 30+ 语言和 22 种中文方言。热词通过 `context` 参数以 LLM prompt 方式注入。无内置 VAD，字幕分段由 `segment_by_timestamps()` 实现（标点 + 时长混合策略）。VRAM 需求较高（~7 GB）。
 
@@ -239,7 +243,7 @@ AudioSegment ──→ DiarizationResult ──→ (--speaker-ref)
 
 ```yaml
 device: auto              # 计算设备: auto / cpu / cuda
-backend: Fun-ASR-Nano     # ASR 后端: Fun-ASR-Paraformer / Fun-ASR-Nano / Qwen3-ASR
+backend: Fun-ASR-Nano     # ASR 后端: Fun-ASR-Paraformer / Fun-ASR-Nano / Qwen3-ASR / Whisper
 diarize: true             # 说话人识别
 language: zh              # 语言（当前仅支持中文）
 speaker_references: null  # 说话人参考音频目录路径
@@ -299,7 +303,8 @@ Multi_Speaker_Transcribe/
 │       │   ├── utils.py               #   共享工具（热词修复、时间戳解析、字幕分段）
 │       │   ├── funasr_nano.py        #   Fun-ASR-Nano 后端
 │       │   ├── funasr_paraformer.py  #   Fun-ASR-Paraformer 后端
-│       │   └── qwen3_asr.py         #   Qwen3-ASR 后端
+│       │   ├── qwen3_asr.py         #   Qwen3-ASR 后端
+│       │   └── whisper.py            #   Whisper 后端 (faster-whisper)
 │       ├── srt_writer.py             # Stage 4: SRT 生成
 │       └── __init__.py
 ├── tests/                             # 测试目录
@@ -360,6 +365,7 @@ uv run python -m transcribe input.mp4 --speaker-ref speakers/ -o output.srt -v
 | [PyTorch](https://pytorch.org/) | 深度学习框架 | BSD-3-Clause |
 | [FunASR](https://github.com/modelscope/FunASR) | 中文语音识别（Fun-ASR-Nano / SeACo-Paraformer + VAD） | MIT |
 | [Qwen3-ASR](https://github.com/QwenLM/Qwen3-ASR) | 多语言语音识别（Qwen3-ASR-1.7B + ForcedAligner） | Apache-2.0 |
+| [faster-whisper](https://github.com/SYSTRAN/faster-whisper) | Whisper 语音识别（CTranslate2 推理引擎，large-v3） | MIT |
 | [Pyannote Audio](https://github.com/pyannote/pyannote-audio) | 说话人识别（Speaker Diarization 4.0 Community-1） | MIT |
 | [3D-Speaker](https://github.com/modelscope/3D-Speaker) | 声纹嵌入提取（ERes2NetV2 中文模型） | Apache-2.0 |
 | [FFmpeg](https://ffmpeg.org/) | 音视频格式转换 | LGPL / GPL |
@@ -396,8 +402,9 @@ uv run pytest tests/test_srt_writer.py -v
 | `test_config.py` | 配置加载（默认值、YAML、CLI 覆盖） |
 | `test_audio_extractor.py` | FFmpeg 音频提取 |
 | `test_srt_writer.py` | SRT 生成（时间戳、标签、合并、排序） |
-| `test_asr.py` | 三后端注册 + 工厂 + 热词修复 + 时间戳解析 + 字幕分段 |
+| `test_asr.py` | ASR 工厂 + 热词修复 + 时间戳解析 + 字幕分段 |
 | `test_qwen3_asr.py` | Qwen3-ASR 后端注册、热词加载、文本-时间戳对齐、mock 转写 |
+| `test_whisper.py` | Whisper 后端注册、热词加载、mock 转写 |
 | `test_diarizer.py` | 说话人识别（mock） |
 | `test_matcher.py` | 声纹匹配（余弦相似度、参考匹配） |
 | `test_pipeline_basic.py` | CLI 解析 + 基础管线 |
@@ -425,6 +432,7 @@ uv run pytest tests/test_srt_writer.py -v
 | ASR | Fun-ASR-Nano (默认) | ~1-2 GB |
 | ASR | Fun-ASR-Paraformer | ~1-2 GB |
 | ASR | Qwen3-ASR | ~7 GB (ASR 5G + Aligner 2G) |
+| ASR | Whisper | ~3-4 GB (large-v3) |
 
 管线在各阶段之间释放模型显存（`cleanup()`），避免同时加载所有模型。
 
